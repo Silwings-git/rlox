@@ -67,7 +67,7 @@ impl Instruction {
 pub struct Chunk {
     code: Vec<u8>,
     constants: ValueArray,
-    lines: Vec<u32>,
+    pub lines: Vec<(u32, u32)>,
 }
 
 impl Chunk {
@@ -79,19 +79,35 @@ impl Chunk {
         }
     }
 
-    fn write_chunk(&mut self, op: u8, line: u32) {
+    pub fn get_line(&self, offset: usize) -> Option<u32> {
+        let mut sum = 0;
+        for (line, count) in &self.lines {
+            sum += *count as usize;
+            if offset <= sum {
+                return Some(*line);
+            }
+        }
+        None
+    }
+
+    fn write_byte(&mut self, op: u8, line: u32) {
         self.code.push(op);
-        self.lines.push(line);
+        match self.lines.last_mut() {
+            Some((last_line, count)) if *last_line == line => {
+                *count += 1;
+            }
+            _ => self.lines.push((line, 1)),
+        }
     }
 
     pub fn write_chunk_op_code(&mut self, op_code: OpCode, line: u32) {
-        self.write_chunk(op_code as u8, line);
+        self.write_byte(op_code as u8, line);
     }
 
     pub fn write_chunk_operand(&mut self, operand: Operand, line: u32) {
         match operand {
             Operand::None => {}
-            Operand::U8(u) => self.write_chunk(u, line),
+            Operand::U8(u) => self.write_byte(u, line),
         }
     }
 
@@ -147,9 +163,5 @@ impl Chunk {
             Operand::None => None,
             Operand::U8(index) => self.constants.get_value(*index as usize),
         }
-    }
-
-    pub fn get_line(&self, index: usize) -> u32 {
-        *self.lines.get(index).unwrap_or(&0)
     }
 }
