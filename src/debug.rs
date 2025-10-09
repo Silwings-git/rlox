@@ -3,6 +3,7 @@ use crate::{
     value::print_value,
 };
 
+#[allow(dead_code)]
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     println!("== {name} ==");
     let mut offset = 0;
@@ -11,7 +12,7 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     }
 }
 
-fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
+pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
     print!("{offset:04} ");
 
     if offset > 0 && chunk.get_line(offset) == chunk.get_line(offset - 1) {
@@ -29,8 +30,13 @@ fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
     };
 
     match instruction.op {
-        OpCode::OpReturn => simple_instruction("OP_RETURN", offset),
-        OpCode::OpConstant => constant_instruction("OP_CONSTANT", chunk, instruction, offset),
+        OpCode::Return => simple_instruction("OP_RETURN", offset),
+        OpCode::Constant => constant_instruction("OP_CONSTANT", chunk, instruction, offset),
+        OpCode::Negate => simple_instruction("OP_NEGATE", offset),
+        OpCode::Add => simple_instruction("OP_ADD", offset),
+        OpCode::Subtract => simple_instruction("OP_SUBTRACT", offset),
+        OpCode::Multiply => simple_instruction("OP_MULTIPLY", offset),
+        OpCode::Divide => simple_instruction("OP_DIVIDE", offset),
     }
 }
 

@@ -25,9 +25,18 @@ macro_rules! opcodes {
 }
 
 opcodes! {
-    // return
-    OpReturn = 0x01,
-    OpConstant = 0x02
+    Return = 0x01,
+    Constant = 0x02,
+    // 负号
+    Negate = 0x03,
+    // +
+    Add=0x04,
+    // -
+    Subtract=0x05,
+    // *
+    Multiply=0x06,
+    // /
+    Divide=0x07
 }
 
 // 操作数类型定义
@@ -63,7 +72,7 @@ impl Instruction {
 }
 
 /// 指令动态数组
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Chunk {
     code: Vec<u8>,
     constants: ValueArray,
@@ -117,38 +126,31 @@ impl Chunk {
 
     pub fn read_opcode(&self, offset: usize) -> Option<Instruction> {
         let byte = self.code.get(offset);
-        match byte {
-            Some(0x01) => Some(Instruction::new(OpCode::OpReturn, Operand::None, 1)),
-            Some(0x02) => {
+
+        let op_code = byte.and_then(|b| OpCode::try_from(*b).ok())?;
+
+        match op_code {
+            OpCode::Return => Some(Instruction::new(OpCode::Return, Operand::None, 1)),
+            OpCode::Constant => {
                 let operand_offset = offset + 1;
                 match self.code.get(operand_offset) {
-                    Some(operand) => Some(Instruction::new(
-                        OpCode::OpConstant,
-                        Operand::U8(*operand),
-                        2,
-                    )),
+                    Some(operand) => {
+                        Some(Instruction::new(OpCode::Constant, Operand::U8(*operand), 2))
+                    }
                     _ => {
                         println!(
-                            "读取 OpConstant 失败：在偏移量 {} 处缺少操作数（需要访问偏移量 {}，总长度：{}）",
-                            offset,
-                            operand_offset,
+                            "读取 OpConstant 失败：在偏移量 {offset} 处缺少操作数（需要访问偏移量 {operand_offset}，总长度：{})",
                             self.code.len()
                         );
                         None
                     }
                 }
             }
-            Some(byte) => {
-                println!("未知操作码：在偏移量 {offset} 处发现 0x{byte:02X}（十进制：{byte})");
-                None
-            }
-            None => {
-                println!(
-                    "读取操作码失败：偏移量 {offset} 超出字节码范围（总长度：{})",
-                    self.code.len()
-                );
-                None
-            }
+            OpCode::Negate => Some(Instruction::new(OpCode::Negate, Operand::None, 1)),
+            OpCode::Add => Some(Instruction::new(OpCode::Add, Operand::None, 1)),
+            OpCode::Subtract => Some(Instruction::new(OpCode::Subtract, Operand::None, 1)),
+            OpCode::Multiply => Some(Instruction::new(OpCode::Multiply, Operand::None, 1)),
+            OpCode::Divide => Some(Instruction::new(OpCode::Divide, Operand::None, 1)),
         }
     }
 

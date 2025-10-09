@@ -1,7 +1,7 @@
 pub type Value = f64;
 
 /// 常量池
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ValueArray {
     values: Vec<Value>,
 }

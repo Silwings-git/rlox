@@ -9,4 +9,4 @@ edition = "2024"
 debug_trace_execution = []
 debug = []
 
-default = ["debug"]
+default = ["debug","debug_trace_execution"]
