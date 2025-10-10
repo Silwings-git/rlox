@@ -1,5 +1,6 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
+use crate::compiler::Parser;
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
 use crate::value::{Value, print_value};
@@ -56,7 +57,11 @@ impl VM {
         self.stack.push(value);
     }
 
-    pub fn interpret(&mut self, chunk: Chunk) -> Result<(), InterpretError> {
+    pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
+        todo!()
+    }
+
+    pub fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), InterpretError> {
         self.chunk = chunk;
         self.ip = 0;
         self.run()
