@@ -36,8 +36,9 @@ fn repl() {
         line.clear();
         let _ = stdin.read_line(&mut line);
         println!();
-        // 尙未可执行
-        VM::new().interpret(&line).unwrap();
+        if let Err(err) = VM::new().interpret(&line) {
+            eprintln!("interpret error: {err:?}");
+        }
     }
 }
 
@@ -92,6 +93,6 @@ mod tests {
 
         chunk.write_chunk_op_code(OpCode::Return, 123);
 
-        vm.interpret(chunk).unwrap();
+        vm.interpret_chunk(chunk).unwrap();
     }
 }

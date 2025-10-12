@@ -16,9 +16,9 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
     print!("{offset:04} ");
 
     if offset > 0 && chunk.get_line(offset) == chunk.get_line(offset - 1) {
-        print!("  | ")
+        print!("{:>4} ", "|")
     } else {
-        print!("{:<4}", chunk.get_line(offset).unwrap_or(0))
+        print!("{:<4} ", chunk.get_line(offset).unwrap_or(0))
     }
 
     let instruction = match chunk.read_opcode(offset) {

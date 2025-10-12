@@ -58,7 +58,14 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
-        todo!()
+        let mut chunk = Chunk::new();
+
+        let mut parser = Parser::new(source, &mut chunk);
+        if !parser.compile() {
+            return Err(InterpretError::CompileError);
+        }
+
+        self.interpret_chunk(chunk)
     }
 
     pub fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), InterpretError> {

@@ -1,31 +1,467 @@
-use std::{iter::Peekable, str::CharIndices};
+use std::{collections::HashMap, iter::Peekable, mem, str::CharIndices};
+
+use crate::{
+    chunk::{Chunk, OpCode, Operand},
+    value::Value,
+};
 
 pub struct Parser<'a> {
     scanner: Scanner<'a>,
+    previous: Token<'a>,
+    current: Token<'a>,
+    had_error: bool,
+    // 恐慌模式,避免级联错误
+    panic_mode: bool,
+    compiling_chunk: &'a mut Chunk,
+    rules: HashMap<TokenType, ParseRule<'a>>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(source: &'static str) -> Self {
+    pub fn new(source: &'a str, chunk: &'a mut Chunk) -> Self {
         Parser {
             scanner: Scanner::init_scanner(source),
+            previous: Default::default(),
+            current: Default::default(),
+            had_error: false,
+            panic_mode: false,
+            compiling_chunk: chunk,
+            rules: ParseRule::init_rules(),
         }
     }
 
-    pub fn compile(&mut self) {
-        let mut line = 0;
+    pub fn compile(&mut self) -> bool {
+        self.advance();
+        self.expression();
+        self.consume(TokenType::Eof, "Expect end of expression.");
+        self.end_compiler();
+        !self.had_error
+    }
+
+    fn expression(&mut self) {
+        // 解析最低优先级及更高优先级的表达式
+        self.parse_precedence(Precedence::Assignment);
+    }
+
+    /// 推进解析器到下一个token，并处理可能的扫描错误
+    ///
+    /// 该方法会将当前token移动到previous中，然后从扫描器获取下一个有效token。
+    /// 如果扫描到错误token(TokenType::Error)，会持续获取下一个token直到得到有效token，
+    /// 并在过程中记录每个错误token的错误信息。
+    fn advance(&mut self) {
+        self.previous = mem::take(&mut self.current);
+
         loop {
-            let token = self.scanner.scan_token();
-            if token.line != line {
-                print!("{:<4}", token.line);
-                line = token.line;
-            } else {
-                print!("   | ");
-            }
-            println!("{:2?} '{}'\n", token.token_type, token.lexeme);
-            if token.token_type == TokenType::Eof {
+            self.current = self.scanner.scan_token();
+            if self.current.token_type != TokenType::Error {
                 break;
             }
+            self.error_at_current(self.current.lexeme);
         }
+    }
+
+    /// 如果current具有预期的token type则读取下一个标识,否则报告错误
+    fn consume(&mut self, token_type: TokenType, message: &str) {
+        if self.current.token_type == token_type {
+            self.advance();
+            return;
+        }
+
+        self.error_at_current(message);
+    }
+
+    fn emit_op_code(&mut self, op_code: OpCode) {
+        let line = self.previous.line;
+        self.current_chunk().write_chunk_op_code(op_code, line);
+    }
+
+    fn emit_op_code_and_operand(&mut self, op_code: OpCode, operand: Operand) {
+        self.emit_op_code(op_code);
+        self.emit_operand(operand);
+    }
+
+    fn emit_operand(&mut self, operand: Operand) {
+        let line = self.previous.line;
+        self.current_chunk().write_chunk_operand(operand, line);
+    }
+
+    fn current_chunk(&mut self) -> &mut Chunk {
+        self.compiling_chunk
+    }
+
+    fn error_at_previous(&mut self, message: &str) {
+        self.error_at(self.previous.clone(), message);
+    }
+
+    /// 在当前位置报告错误
+    fn error_at_current(&mut self, message: &str) {
+        self.error_at(self.current.clone(), message);
+    }
+
+    /// 在token处报告错误
+    fn error_at(&mut self, token: Token<'a>, message: &str) {
+        if self.panic_mode {
+            return;
+        }
+
+        self.panic_mode = true;
+
+        eprint!("[line {}] Error", token.line);
+
+        if token.token_type == TokenType::Eof {
+            eprint!(" at end");
+        } else if token.token_type == TokenType::Error {
+            // Nothing
+        } else {
+            eprintln!(" at '{}'", &token.lexeme);
+        }
+
+        eprintln!(": {message}");
+        self.had_error = true;
+    }
+
+    fn end_compiler(&mut self) {
+        self.emit_return();
+        #[cfg(feature = "debug_trace_execution")]
+        {
+            if !self.had_error {
+                use crate::debug::disassemble_chunk;
+                disassemble_chunk(self.current_chunk(), "code");
+            }
+        }
+    }
+
+    fn emit_return(&mut self) {
+        self.emit_op_code(OpCode::Return);
+    }
+
+    fn emit_constant(&mut self, value: Value) {
+        let operand = self.make_constant(value);
+        self.emit_op_code_and_operand(OpCode::Constant, operand);
+    }
+
+    fn make_constant(&mut self, value: Value) -> Operand {
+        let constant = self.current_chunk().add_constant(value);
+        if constant > u8::MAX as usize {
+            self.error_at_previous("Too many constants in one chunk.");
+            return Operand::None;
+        }
+
+        Operand::U8(constant as u8)
+    }
+
+    /// 解析数值
+    fn number(&mut self) {
+        let value = self.previous.lexeme.parse::<f64>();
+        match value {
+            Ok(v) => self.emit_constant(v),
+            Err(_) => {
+                self.error_at_previous("Invalid number literal.");
+            }
+        }
+    }
+
+    /// 解析小括号
+    /// 括号表达式的唯一作用是语法上的: 允许在需要高优先级的地方插入一个低优先级的表达式.
+    /// 因此,它本身没有运行时语法,也就不需要发出如何字节码.
+    /// 对expression()的内部调用负责为括号内的表达式生成字节码
+    fn grouping(&mut self) {
+        self.expression();
+        self.consume(TokenType::RightParen, "Expect ')' after expression.");
+    }
+
+    /// 解析一元表达式
+    fn unary(&mut self) {
+        let operator_type = self.previous.token_type.clone();
+
+        // 解析优先级大于等于unary的表达式
+        self.parse_precedence(Precedence::Unary);
+
+        match operator_type {
+            TokenType::Minus => self.emit_op_code(OpCode::Negate),
+            _ => {}
+        }
+    }
+
+    /// 解析二元操作符
+    fn binary(&mut self) {
+        let operator_type = self.previous.token_type.clone();
+        let parse_rule = match self.get_rule(&operator_type) {
+            Some(parse_rule) => parse_rule,
+            None => {
+                self.error_at_previous(&format!("Cannot find {operator_type:?} parse rule"));
+                return;
+            }
+        };
+
+        // 因为我们的二元操作符是左结合的,所以使用比当前操作符高一优先级的操作数
+        // 如果操作符是右结合的,应该使用与当前操作符相同的优先级来调用parse_precedence
+        let higher_precedence = match parse_rule.precedence.higher() {
+            Some(hp) => hp,
+            None => {
+                self.error_at_previous("No higher precedence");
+                return;
+            }
+        };
+        self.parse_precedence(higher_precedence);
+
+        match operator_type {
+            TokenType::Plus => self.emit_op_code(OpCode::Add),
+            TokenType::Minus => self.emit_op_code(OpCode::Subtract),
+            TokenType::Star => self.emit_op_code(OpCode::Multiply),
+            TokenType::Slash => self.emit_op_code(OpCode::Divide),
+            _ => {}
+        }
+    }
+
+    /// 从当前开始解析给定优先级或更高优先级的任何表达式
+    fn parse_precedence(&mut self, precedence: Precedence) {
+        self.advance();
+
+        // 为当前标识查找对应的前缀解析器
+        // 根据定义，第一个标识总是属于某种前缀表达式。它可能作为一个操作数嵌套在一个或多个中缀表达式中，
+        // 但是当我们从左到右阅读代码时，碰到的第一个标识总是属于一个前缀表达式。
+        match self
+            .get_rule(&self.previous.token_type)
+            .and_then(|rule| rule.prefix)
+        {
+            Some(prefix_rule) => prefix_rule(self),
+            None => {
+                self.error_at_previous("Expect expression.");
+                return;
+            }
+        };
+
+        // 为前缀表达式的下一个标识寻找中缀解析器
+        while self
+            .get_rule(&self.current.token_type)
+            // 该中缀解析器的优先级应当大于等于指定的precedence
+            .filter(|rule| rule.precedence as u8 >= precedence as u8)
+            .is_some()
+        {
+            // 如果找得到,我们推进到下一个token,新得到的token是中缀表达式的右操作数
+            self.advance();
+            match self
+                // 获取前一个token(由于使用advance推进了,所有起始就是刚刚while判断中使用的current)的中缀解析函数并执行
+                .get_rule(&self.previous.token_type)
+                .and_then(|rule| rule.infix)
+            {
+                Some(infix) => infix(self),
+                None => {
+                    self.error_at_previous("Expect expression.");
+                    return;
+                }
+            }
+        }
+    }
+
+    fn string(&mut self) {
+        todo!("string")
+    }
+
+    fn literal(&mut self) {
+        todo!("literal")
+    }
+
+    fn get_rule(&self, operator_type: &TokenType) -> Option<&ParseRule<'a>> {
+        self.rules.get(operator_type)
+    }
+}
+
+/// 解析规则,其被映射到一个类型标识
+struct ParseRule<'a> {
+    // 编译以该类型标识为起点的前缀表达式的函数
+    prefix: Option<ParseFn<'a>>,
+    // 编译一个左操作数后跟该类型标识的中缀表达式的函数
+    infix: Option<ParseFn<'a>>,
+    // 使用该标识作为操作符的中缀表达式的优先级
+    precedence: Precedence,
+}
+
+type ParseFn<'a> = fn(&mut Parser<'a>);
+
+impl<'a> Default for ParseRule<'a> {
+    fn default() -> Self {
+        Self {
+            prefix: Default::default(),
+            infix: Default::default(),
+            precedence: Precedence::None,
+        }
+    }
+}
+
+impl<'a> ParseRule<'a> {
+    fn new(
+        prefix: Option<ParseFn<'a>>,
+        infix: Option<ParseFn<'a>>,
+        precedence: Precedence,
+    ) -> Self {
+        ParseRule {
+            prefix,
+            infix,
+            precedence,
+        }
+    }
+
+    fn init_rules() -> HashMap<TokenType, ParseRule<'a>> {
+        let mut rules = HashMap::new();
+        rules.insert(
+            TokenType::LeftParen,
+            Self::new(Some(Parser::grouping), None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::RightParen,
+            Self::new(None, None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::LeftBrace,
+            Self::new(None, None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::RightBrace,
+            Self::new(None, None, Precedence::None),
+        );
+        rules.insert(TokenType::Comma, Self::new(None, None, Precedence::None));
+        rules.insert(TokenType::Dot, Self::new(None, None, Precedence::None));
+        rules.insert(
+            TokenType::Minus,
+            Self::new(Some(Parser::unary), Some(Parser::binary), Precedence::Term),
+        );
+        rules.insert(
+            TokenType::Plus,
+            Self::new(None, Some(Parser::binary), Precedence::Term),
+        );
+        rules.insert(
+            TokenType::Semicolon,
+            Self::new(None, None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::Slash,
+            Self::new(None, Some(Parser::binary), Precedence::Factor),
+        );
+        rules.insert(
+            TokenType::Star,
+            Self::new(None, Some(Parser::binary), Precedence::Factor),
+        );
+        rules.insert(
+            TokenType::Bang,
+            Self::new(Some(Parser::unary), None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::BangEqual,
+            Self::new(None, Some(Parser::binary), Precedence::Equality),
+        );
+        rules.insert(TokenType::Equal, ParseRule::default());
+        rules.insert(
+            TokenType::EqualEqual,
+            Self::new(None, Some(Parser::binary), Precedence::Equality),
+        );
+        rules.insert(
+            TokenType::Greater,
+            Self::new(None, Some(Parser::binary), Precedence::Comparison),
+        );
+        rules.insert(
+            TokenType::GreaterEqual,
+            Self::new(None, Some(Parser::binary), Precedence::Comparison),
+        );
+        rules.insert(
+            TokenType::Less,
+            Self::new(None, Some(Parser::binary), Precedence::Comparison),
+        );
+        rules.insert(
+            TokenType::LessEqual,
+            Self::new(None, Some(Parser::binary), Precedence::Comparison),
+        );
+        rules.insert(TokenType::Identifier, ParseRule::default());
+        rules.insert(
+            TokenType::String,
+            Self::new(Some(Parser::string), None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::Number,
+            Self::new(Some(Parser::number), None, Precedence::None),
+        );
+        rules.insert(
+            TokenType::Number,
+            Self::new(Some(Parser::number), None, Precedence::None),
+        );
+        rules.insert(TokenType::And, ParseRule::default());
+        rules.insert(TokenType::Class, ParseRule::default());
+        rules.insert(TokenType::Else, ParseRule::default());
+        rules.insert(
+            TokenType::False,
+            Self::new(Some(Parser::literal), None, Precedence::None),
+        );
+        rules.insert(TokenType::For, ParseRule::default());
+        rules.insert(TokenType::Fun, ParseRule::default());
+        rules.insert(TokenType::If, ParseRule::default());
+        rules.insert(
+            TokenType::Nil,
+            Self::new(Some(Parser::literal), None, Precedence::None),
+        );
+        rules.insert(TokenType::Or, ParseRule::default());
+        rules.insert(TokenType::Print, ParseRule::default());
+        rules.insert(TokenType::Return, ParseRule::default());
+        rules.insert(TokenType::Super, ParseRule::default());
+        rules.insert(TokenType::This, ParseRule::default());
+        rules.insert(
+            TokenType::True,
+            Self::new(Some(Parser::literal), None, Precedence::None),
+        );
+        rules.insert(TokenType::Var, ParseRule::default());
+        rules.insert(TokenType::While, ParseRule::default());
+        rules.insert(TokenType::Error, ParseRule::default());
+        rules.insert(TokenType::Eof, ParseRule::default());
+        rules
+    }
+}
+
+macro_rules! precedence {
+    ($($name:ident = $val:expr),*) => {
+        /// 操作符优先级,数值越小优先级越小
+        #[derive(Clone, Copy)]
+        #[repr(u8)]
+        pub enum Precedence {
+            $($name = $val),*
+        }
+
+        impl TryFrom<u8> for Precedence {
+            type Error = u8;
+
+            fn try_from(v: u8) -> Result<Self, Self::Error> {
+                match v {
+                    $($val => Ok(Self::$name)),*,
+                    _ => Err(v)
+                }
+            }
+        }
+
+        impl std::fmt::Debug for Precedence {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(Self::$name => write!(f, "{}({})", stringify!($name), $val)),*,
+                }
+            }
+        }
+    };
+}
+
+precedence! {
+    None=1,
+    Assignment=2, // =
+    Or=3,         // or
+    And=4,        // and
+    Equality=5,   // == !=
+    Comparison=6, // < > <= >=
+    Term=7,       // + -
+    Factor=8,     // * /
+    Unary=9,      // ! -
+    Call=10,      // . ()
+    Primary=11
+}
+
+impl Precedence {
+    fn higher(&self) -> Option<Precedence> {
+        Precedence::try_from(*self as u8 + 1).ok()
     }
 }
 
@@ -96,10 +532,22 @@ pub enum TokenType {
     Error,
     Eof,
 }
+
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
     token_type: TokenType,
     lexeme: &'a str,
-    line: usize,
+    line: u32,
+}
+
+impl<'a> Default for Token<'a> {
+    fn default() -> Self {
+        Self {
+            token_type: TokenType::Eof,
+            lexeme: Default::default(),
+            line: Default::default(),
+        }
+    }
 }
 
 pub struct Scanner<'a> {
@@ -109,7 +557,7 @@ pub struct Scanner<'a> {
     start: usize,
     // 当前扫描的词素的尾位置
     current: usize,
-    line: usize,
+    line: u32,
 }
 
 impl<'a> Scanner<'a> {
@@ -231,7 +679,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn is_alpha(c: char) -> bool {
-        ('a'..='z').contains(&c) || ('A'..='Z').contains(&c) || c == '_'
+        c.is_ascii_lowercase() || c.is_ascii_uppercase() || c == '_'
     }
 
     /// 消费数值并返回数值类型的token
