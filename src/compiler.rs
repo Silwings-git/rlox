@@ -74,6 +74,11 @@ impl<'a> Parser<'a> {
         self.current_chunk().write_chunk_op_code(op_code, line);
     }
 
+    fn emit_op_codes(&mut self, op_code_a: OpCode, op_code_b: OpCode) {
+        self.emit_op_code(op_code_a);
+        self.emit_op_code(op_code_b);
+    }
+
     fn emit_op_code_and_operand(&mut self, op_code: OpCode, operand: Operand) {
         self.emit_op_code(op_code);
         self.emit_operand(operand);
@@ -153,7 +158,7 @@ impl<'a> Parser<'a> {
     fn number(&mut self) {
         let value = self.previous.lexeme.parse::<f64>();
         match value {
-            Ok(v) => self.emit_constant(v),
+            Ok(v) => self.emit_constant(v.into()),
             Err(_) => {
                 self.error_at_previous("Invalid number literal.");
             }
@@ -178,6 +183,7 @@ impl<'a> Parser<'a> {
 
         match operator_type {
             TokenType::Minus => self.emit_op_code(OpCode::Negate),
+            TokenType::Bang => self.emit_op_code(OpCode::Not),
             _ => {}
         }
     }
@@ -209,6 +215,12 @@ impl<'a> Parser<'a> {
             TokenType::Minus => self.emit_op_code(OpCode::Subtract),
             TokenType::Star => self.emit_op_code(OpCode::Multiply),
             TokenType::Slash => self.emit_op_code(OpCode::Divide),
+            TokenType::BangEqual => self.emit_op_codes(OpCode::Equal, OpCode::Not),
+            TokenType::EqualEqual => self.emit_op_code(OpCode::Equal),
+            TokenType::Greater => self.emit_op_code(OpCode::Gerater),
+            TokenType::GreaterEqual => self.emit_op_codes(OpCode::Less, OpCode::Not),
+            TokenType::Less => self.emit_op_code(OpCode::Less),
+            TokenType::LessEqual => self.emit_op_codes(OpCode::Gerater, OpCode::Not),
             _ => {}
         }
     }
@@ -258,8 +270,14 @@ impl<'a> Parser<'a> {
         todo!("string")
     }
 
+    /// 解析字面量
     fn literal(&mut self) {
-        todo!("literal")
+        match self.previous.token_type {
+            TokenType::True => self.emit_op_code(OpCode::True),
+            TokenType::False => self.emit_op_code(OpCode::False),
+            TokenType::Nil => self.emit_op_code(OpCode::Nil),
+            _ => {}
+        }
     }
 
     fn get_rule(&self, operator_type: &TokenType) -> Option<&ParseRule<'a>> {

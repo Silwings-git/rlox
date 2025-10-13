@@ -6,13 +6,14 @@ use crate::debug::disassemble_instruction;
 use crate::value::{Value, print_value};
 
 macro_rules! binary_op {
-    ($vm:expr, $op:tt) => {{
-        if $vm.peek(0).is_none() || $vm.peek(1).is_none(){
-            return Err(InterpretError::RuntimeError("Operand must be a number.".to_string()));
-        }
-        let b =  $vm.pop().unwrap();
-        let a =  $vm.pop().unwrap();
-        $vm.push(a $op b);
+    ($vm:expr, $value_type:path, $op:tt) => {{
+        let b = $vm.peek(0).and_then(|v|v.as_number().ok()).ok_or_else(||$vm.runtime_error("Operand must be a number."))?;
+        let a = $vm.peek(1).and_then(|v|v.as_number().ok()).ok_or_else(||$vm.runtime_error("Operand must be a number."))?;
+
+        $vm.pop().unwrap();
+        $vm.pop().unwrap();
+
+        $vm.push($value_type(a $op b));
     }};
 }
 
@@ -53,8 +54,12 @@ impl VM {
         self.stack.pop()
     }
 
-    fn push(&mut self, value: Value) {
-        self.stack.push(value);
+    fn push<T: Into<Value>>(&mut self, v: T) {
+        self.stack.push(v.into());
+    }
+
+    fn reset_stack(&mut self) {
+        self.stack.clear();
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
@@ -92,7 +97,7 @@ impl VM {
             let instruction = self.read_byte()?;
             match instruction.op {
                 OpCode::Return => {
-                    print_value(&self.stack.pop().ok_or(InterpretError::RuntimeError(
+                    print_value(&self.pop().ok_or(InterpretError::RuntimeError(
                         "return: stack is empty".to_string(),
                     ))?);
                     println!();
@@ -103,17 +108,44 @@ impl VM {
                     self.push(*constant);
                 }
                 OpCode::Negate => {
-                    let value = self.stack.pop().ok_or(InterpretError::RuntimeError(
-                        "negate: stack is empty".to_string(),
-                    ))?;
-                    self.stack.push(-value);
+                    let number = self
+                        .peek(0)
+                        .and_then(|v| v.as_number().ok())
+                        .ok_or_else(|| self.runtime_error("Operand must be a number."))?;
+                    self.pop().unwrap();
+                    self.push(-number);
                 }
-                OpCode::Add => binary_op!(self,+),
-                OpCode::Subtract => binary_op!(self,-),
-                OpCode::Multiply => binary_op!(self,*),
-                OpCode::Divide => binary_op!(self,/),
+                OpCode::Add => binary_op!(self,Value::Number,+),
+                OpCode::Subtract => binary_op!(self,Value::Number,-),
+                OpCode::Multiply => binary_op!(self,Value::Number,*),
+                OpCode::Divide => binary_op!(self,Value::Number,/),
+                OpCode::True => self.push(Value::Bool(true)),
+                OpCode::False => self.push(Value::Bool(false)),
+                OpCode::Nil => self.push(Value::Nil),
+                OpCode::Not => {
+                    // `false` and `nil` are false, and all other values are true.
+                    let pop = match self.pop().unwrap() {
+                        Value::Bool(b) => b,
+                        Value::Nil => false,
+                        Value::Number(_) => true,
+                    };
+                    self.push(!pop);
+                }
+                OpCode::Equal => {
+                    let b = self.pop().unwrap();
+                    let a = self.pop().unwrap();
+                    self.push(a.eq(&b));
+                }
+                OpCode::Gerater => binary_op!(self,Value::Bool,>),
+                OpCode::Less => binary_op!(self,Value::Bool,<),
             }
         }
+    }
+
+    fn runtime_error(&mut self, arg: &str) -> InterpretError {
+        let line = self.chunk.get_line(self.ip - 1).unwrap_or(1);
+        self.reset_stack();
+        InterpretError::RuntimeError(format!("[line {line}] in script: {arg}"))
     }
 
     fn read_byte(&mut self) -> Result<Instruction, InterpretError> {

@@ -26,6 +26,7 @@ macro_rules! opcodes {
 
 opcodes! {
     Return = 0x01,
+    // 常量
     Constant = 0x02,
     // 负号
     Negate = 0x03,
@@ -36,7 +37,21 @@ opcodes! {
     // *
     Multiply=0x06,
     // /
-    Divide=0x07
+    Divide=0x07,
+    // nil
+    Nil=0x08,
+    // true
+    True=0x09,
+    // false
+    False=0x10,
+    // !
+    Not=0x11,
+    // =
+    Equal=0x12,
+    // >
+    Gerater=0x13,
+    // <
+    Less=0x14
 }
 
 // 操作数类型定义
@@ -62,6 +77,7 @@ impl Display for Operand {
 pub struct Instruction {
     pub op: OpCode,
     pub operand: Operand,
+    // 完整指令的长度
     pub len: usize,
 }
 
@@ -151,6 +167,13 @@ impl Chunk {
             OpCode::Subtract => Some(Instruction::new(OpCode::Subtract, Operand::None, 1)),
             OpCode::Multiply => Some(Instruction::new(OpCode::Multiply, Operand::None, 1)),
             OpCode::Divide => Some(Instruction::new(OpCode::Divide, Operand::None, 1)),
+            OpCode::True => Some(Instruction::new(OpCode::True, Operand::None, 1)),
+            OpCode::False => Some(Instruction::new(OpCode::False, Operand::None, 1)),
+            OpCode::Nil => Some(Instruction::new(OpCode::Nil, Operand::None, 1)),
+            OpCode::Not => Some(Instruction::new(OpCode::Not, Operand::None, 1)),
+            OpCode::Equal => Some(Instruction::new(OpCode::Equal, Operand::None, 1)),
+            OpCode::Gerater => Some(Instruction::new(OpCode::Gerater, Operand::None, 1)),
+            OpCode::Less => Some(Instruction::new(OpCode::Less, Operand::None, 1)),
         }
     }
 

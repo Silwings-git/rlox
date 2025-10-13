@@ -73,17 +73,17 @@ mod tests {
         let mut vm = VM::new();
 
         let mut chunk = Chunk::new();
-        let constant = chunk.add_constant(1.2);
+        let constant = chunk.add_constant(1.2.into());
         chunk.write_chunk_op_code(OpCode::Constant, 123);
         chunk.write_chunk_operand(Operand::U8(constant as u8), 123);
 
-        let constant = chunk.add_constant(3.4);
+        let constant = chunk.add_constant(3.4.into());
         chunk.write_chunk_op_code(OpCode::Constant, 123);
         chunk.write_chunk_operand(Operand::U8(constant as u8), 123);
 
         chunk.write_chunk_op_code(OpCode::Add, 123);
 
-        let constant = chunk.add_constant(5.6);
+        let constant = chunk.add_constant(5.6.into());
         chunk.write_chunk_op_code(OpCode::Constant, 123);
         chunk.write_chunk_operand(Operand::U8(constant as u8), 123);
 
