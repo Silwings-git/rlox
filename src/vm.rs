@@ -1,8 +1,7 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
-#[cfg(feature = "debug_trace_execution")]
-use crate::debug::disassemble_instruction;
+use crate::config::VMConfig;
 use crate::value::{Value, print_value};
 
 macro_rules! binary_op {
@@ -13,17 +12,61 @@ macro_rules! binary_op {
         $vm.pop().unwrap();
         $vm.pop().unwrap();
 
-        $vm.push($value_type(a $op b));
+        $vm.push($value_type(a $op b))?;
     }};
 }
 
-type Stack = Vec<Value>;
-
+// todo 优化栈,使其支持最大容量限制
 pub struct VM {
     chunk: Chunk,
     // 始终指向即将执行的指令
     ip: usize,
     stack: Stack,
+}
+
+struct Stack {
+    inner: Vec<Value>,
+    max_stack_depth: usize,
+}
+
+impl Stack {
+    fn new(max_depth: usize) -> Self {
+        Self {
+            inner: vec![],
+            max_stack_depth: max_depth,
+        }
+    }
+
+    fn peek(&self, distance: usize) -> Option<&Value> {
+        if self.inner.len() > distance {
+            Some(&self.inner[self.inner.len() - 1 - distance])
+        } else {
+            None
+        }
+    }
+
+    fn pop(&mut self) -> Option<Value> {
+        self.inner.pop()
+    }
+
+    fn push<T: Into<Value>>(&mut self, v: T) -> Result<(), InterpretError> {
+        if self.inner.len() > self.max_stack_depth {
+            return Err(InterpretError::RuntimeError(format!(
+                "StackOverflow: max depth {} exceeded",
+                self.max_stack_depth
+            )));
+        }
+        self.inner.push(v.into());
+        Ok(())
+    }
+
+    fn reset_stack(&mut self) {
+        self.inner.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
 }
 
 #[allow(dead_code)]
@@ -34,32 +77,28 @@ pub enum InterpretError {
 }
 
 impl VM {
-    pub fn new() -> Self {
+    pub fn new(config: VMConfig) -> Self {
         VM {
             chunk: Chunk::new(),
             ip: 0,
-            stack: Default::default(),
+            stack: Stack::new(config.max_stack_depth),
         }
     }
 
     fn peek(&self, distance: usize) -> Option<&Value> {
-        if self.stack.len() > distance {
-            Some(&self.stack[self.stack.len() - 1 - distance])
-        } else {
-            None
-        }
+        self.stack.peek(distance)
     }
 
     fn pop(&mut self) -> Option<Value> {
         self.stack.pop()
     }
 
-    fn push<T: Into<Value>>(&mut self, v: T) {
-        self.stack.push(v.into());
+    fn push<T: Into<Value>>(&mut self, v: T) -> Result<(), InterpretError> {
+        self.stack.push(v)
     }
 
     fn reset_stack(&mut self) {
-        self.stack.clear();
+        self.stack.reset_stack();
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
@@ -83,9 +122,10 @@ impl VM {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             {
+                use crate::debug::disassemble_instruction;
                 print!("          ");
                 if !self.stack.is_empty() {
-                    for v in self.stack.iter().rev() {
+                    for v in self.stack.inner.iter().rev() {
                         print!("[ ");
                         print_value(v);
                         print!(" ]");
@@ -105,7 +145,7 @@ impl VM {
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant(&instruction.operand)?;
-                    self.push(*constant);
+                    self.push(*constant)?;
                 }
                 OpCode::Negate => {
                     let number = self
@@ -113,15 +153,15 @@ impl VM {
                         .and_then(|v| v.as_number().ok())
                         .ok_or_else(|| self.runtime_error("Operand must be a number."))?;
                     self.pop().unwrap();
-                    self.push(-number);
+                    self.push(-number)?;
                 }
                 OpCode::Add => binary_op!(self,Value::Number,+),
                 OpCode::Subtract => binary_op!(self,Value::Number,-),
                 OpCode::Multiply => binary_op!(self,Value::Number,*),
                 OpCode::Divide => binary_op!(self,Value::Number,/),
-                OpCode::True => self.push(Value::Bool(true)),
-                OpCode::False => self.push(Value::Bool(false)),
-                OpCode::Nil => self.push(Value::Nil),
+                OpCode::True => self.push(true)?,
+                OpCode::False => self.push(false)?,
+                OpCode::Nil => self.push(Value::Nil)?,
                 OpCode::Not => {
                     // `false` and `nil` are false, and all other values are true.
                     let pop = match self.pop().unwrap() {
@@ -129,12 +169,12 @@ impl VM {
                         Value::Nil => false,
                         Value::Number(_) => true,
                     };
-                    self.push(!pop);
+                    self.push(!pop)?;
                 }
                 OpCode::Equal => {
                     let b = self.pop().unwrap();
                     let a = self.pop().unwrap();
-                    self.push(a.eq(&b));
+                    self.push(a.eq(&b))?;
                 }
                 OpCode::Gerater => binary_op!(self,Value::Bool,>),
                 OpCode::Less => binary_op!(self,Value::Bool,<),

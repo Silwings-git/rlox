@@ -5,20 +5,25 @@ use std::{
     process,
 };
 
-use crate::vm::{InterpretError, VM};
+use crate::{
+    config::VMConfig,
+    vm::{InterpretError, VM},
+};
 
 mod chunk;
 mod compiler;
+mod config;
 mod debug;
 mod value;
 mod vm;
 
 fn main() {
+    let config = VMConfig::new();
     let args: Vec<String> = env::args().collect();
     if args.len() == 1 {
-        repl();
+        repl(config);
     } else if args.len() == 2 {
-        run_file(Path::new(&args[1]));
+        run_file(Path::new(&args[1]), config);
     } else {
         eprintln!("Usage: rlox [path]");
         process::exit(64);
@@ -27,7 +32,7 @@ fn main() {
     process::exit(0);
 }
 
-fn repl() {
+fn repl(vm_config: VMConfig) {
     let stdin = stdin();
     let mut line = String::new();
     loop {
@@ -36,13 +41,13 @@ fn repl() {
         line.clear();
         let _ = stdin.read_line(&mut line);
         println!();
-        if let Err(err) = VM::new().interpret(&line) {
+        if let Err(err) = VM::new(vm_config).interpret(&line) {
             eprintln!("interpret error: {err:?}");
         }
     }
 }
 
-fn run_file(path: &Path) {
+fn run_file(path: &Path, vm_config: VMConfig) {
     let source = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(e) => {
@@ -50,7 +55,7 @@ fn run_file(path: &Path) {
             process::exit(74);
         }
     };
-    let result = VM::new().interpret(&source);
+    let result = VM::new(vm_config).interpret(&source);
     match result {
         Err(InterpretError::CompileError) => process::exit(65),
         Err(InterpretError::RuntimeError(msg)) => {
@@ -65,12 +70,13 @@ fn run_file(path: &Path) {
 mod tests {
     use crate::{
         chunk::{Chunk, OpCode, Operand},
+        config::VMConfig,
         vm::VM,
     };
 
     #[test]
     fn test_op() {
-        let mut vm = VM::new();
+        let mut vm = VM::new(VMConfig::new());
 
         let mut chunk = Chunk::new();
         let constant = chunk.add_constant(1.2.into());
