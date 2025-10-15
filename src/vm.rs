@@ -16,7 +16,6 @@ macro_rules! binary_op {
     }};
 }
 
-// todo 优化栈,使其支持最大容量限制
 pub struct VM {
     chunk: Chunk,
     // 始终指向即将执行的指令
@@ -145,7 +144,7 @@ impl VM {
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant(&instruction.operand)?;
-                    self.push(*constant)?;
+                    self.push(constant.clone())?;
                 }
                 OpCode::Negate => {
                     let number = self
@@ -155,7 +154,26 @@ impl VM {
                     self.pop().unwrap();
                     self.push(-number)?;
                 }
-                OpCode::Add => binary_op!(self,Value::Number,+),
+                OpCode::Add => {
+                    let b = self.peek(0).cloned();
+                    let a = self.peek(1).cloned();
+                    match (b, a) {
+                        (Some(Value::String(s2)), Some(Value::String(s1))) => {
+                            self.pop().unwrap();
+                            self.pop().unwrap();
+                            let added = s1 + &s2;
+                            self.push(added)?
+                        }
+                        (Some(Value::Number(n2)), Some(Value::Number(n1))) => {
+                            self.pop().unwrap();
+                            self.pop().unwrap();
+                            self.push(n1 + n2)?
+                        }
+                        _ => {
+                            Err(self.runtime_error("Operands must be two numbers or two strings."))?
+                        }
+                    }
+                }
                 OpCode::Subtract => binary_op!(self,Value::Number,-),
                 OpCode::Multiply => binary_op!(self,Value::Number,*),
                 OpCode::Divide => binary_op!(self,Value::Number,/),
@@ -168,6 +186,7 @@ impl VM {
                         Value::Bool(b) => b,
                         Value::Nil => false,
                         Value::Number(_) => true,
+                        Value::String(_) => true,
                     };
                     self.push(!pop)?;
                 }

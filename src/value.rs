@@ -2,11 +2,12 @@ use std::fmt::Display;
 
 use crate::vm::InterpretError;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Bool(bool),
     Nil,
     Number(f64),
+    String(String),
 }
 
 impl PartialEq for Value {
@@ -14,7 +15,8 @@ impl PartialEq for Value {
         match (self, other) {
             (Self::Bool(r1), Self::Bool(r2)) => r1 == r2,
             (Self::Number(r1), Self::Number(r2)) => r1 == r2,
-            (Value::Nil, Value::Nil) => true,
+            (Self::Nil, Self::Nil) => true,
+            (Self::String(str1), Self::String(str2)) => str1.eq(str2),
             _ => false,
         }
     }
@@ -32,12 +34,19 @@ impl From<f64> for Value {
     }
 }
 
+impl From<String> for Value {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Bool(b) => write!(f, "{b}"),
             Value::Nil => write!(f, "nil"),
             Value::Number(n) => write!(f, "{n}"),
+            Value::String(str) => write!(f, "{str}"),
         }
     }
 }
@@ -64,8 +73,8 @@ impl ValueArray {
         ValueArray { values: vec![] }
     }
 
-    pub fn write_value_array(&mut self, value: Value) {
-        self.values.push(value);
+    pub fn write_value_array<T: Into<Value>>(&mut self, value: T) {
+        self.values.push(value.into());
     }
 
     pub fn len(&self) -> usize {

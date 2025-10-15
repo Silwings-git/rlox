@@ -42,7 +42,10 @@ fn repl(vm_config: VMConfig) {
         let _ = stdin.read_line(&mut line);
         println!();
         if let Err(err) = VM::new(vm_config).interpret(&line) {
-            eprintln!("interpret error: {err:?}");
+            match err {
+                InterpretError::CompileError => eprintln!("Compile error"),
+                InterpretError::RuntimeError(msg) => eprintln!("{msg}"),
+            }
         }
     }
 }
@@ -79,17 +82,17 @@ mod tests {
         let mut vm = VM::new(VMConfig::new());
 
         let mut chunk = Chunk::new();
-        let constant = chunk.add_constant(1.2.into());
+        let constant = chunk.add_constant(1.2);
         chunk.write_chunk_op_code(OpCode::Constant, 123);
         chunk.write_chunk_operand(Operand::U8(constant as u8), 123);
 
-        let constant = chunk.add_constant(3.4.into());
+        let constant = chunk.add_constant(3.4);
         chunk.write_chunk_op_code(OpCode::Constant, 123);
         chunk.write_chunk_operand(Operand::U8(constant as u8), 123);
 
         chunk.write_chunk_op_code(OpCode::Add, 123);
 
-        let constant = chunk.add_constant(5.6.into());
+        let constant = chunk.add_constant(5.6);
         chunk.write_chunk_op_code(OpCode::Constant, 123);
         chunk.write_chunk_operand(Operand::U8(constant as u8), 123);
 

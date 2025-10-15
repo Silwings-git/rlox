@@ -1,4 +1,9 @@
-use std::{collections::HashMap, iter::Peekable, mem, str::CharIndices};
+use std::{
+    collections::HashMap,
+    iter::Peekable,
+    mem,
+    str::{CharIndices, FromStr},
+};
 
 use crate::{
     chunk::{Chunk, OpCode, Operand},
@@ -139,12 +144,12 @@ impl<'a> Parser<'a> {
         self.emit_op_code(OpCode::Return);
     }
 
-    fn emit_constant(&mut self, value: Value) {
+    fn emit_constant<T: Into<Value>>(&mut self, value: T) {
         let operand = self.make_constant(value);
         self.emit_op_code_and_operand(OpCode::Constant, operand);
     }
 
-    fn make_constant(&mut self, value: Value) -> Operand {
+    fn make_constant<T: Into<Value>>(&mut self, value: T) -> Operand {
         let constant = self.current_chunk().add_constant(value);
         if constant > u8::MAX as usize {
             self.error_at_previous("Too many constants in one chunk.");
@@ -158,7 +163,7 @@ impl<'a> Parser<'a> {
     fn number(&mut self) {
         let value = self.previous.lexeme.parse::<f64>();
         match value {
-            Ok(v) => self.emit_constant(v.into()),
+            Ok(v) => self.emit_constant(v),
             Err(_) => {
                 self.error_at_previous("Invalid number literal.");
             }
@@ -267,7 +272,17 @@ impl<'a> Parser<'a> {
     }
 
     fn string(&mut self) {
-        todo!("string")
+        let value = self
+            .previous
+            .lexeme
+            .parse::<String>()
+            .and_then(|s| String::from_str(s.trim_start_matches('"').trim_end_matches('"')));
+        match value {
+            Ok(v) => self.emit_constant(v),
+            Err(_) => {
+                self.error_at_previous("Invalid string literal.");
+            }
+        }
     }
 
     /// 解析字面量

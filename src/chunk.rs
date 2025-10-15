@@ -178,7 +178,7 @@ impl Chunk {
     }
 
     /// 向常量池添加常量
-    pub fn add_constant(&mut self, value: Value) -> usize {
+    pub fn add_constant<T: Into<Value>>(&mut self, value: T) -> usize {
         self.constants.write_value_array(value);
         self.constants.len() - 1
     }
