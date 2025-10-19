@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
@@ -21,6 +23,7 @@ pub struct VM {
     // 始终指向即将执行的指令
     ip: usize,
     stack: Stack,
+    strings: HashSet<String>,
 }
 
 struct Stack {
