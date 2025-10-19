@@ -44,6 +44,11 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::Equal => simple_instruction("OP_EQUAL", offset),
         OpCode::Gerater => simple_instruction("OP_GERATER", offset),
         OpCode::Less => simple_instruction("OP_LESS", offset),
+        OpCode::Print => simple_instruction("OP_PRINT", offset),
+        OpCode::Pop => simple_instruction("OP_POP", offset),
+        OpCode::DefineGlobal => simple_instruction("OP_DEFINE_GLOBAL", offset),
+        OpCode::GetGlobal => simple_instruction("OP_GET_GLOBAL", offset),
+        OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL", offset),
     }
 }
 

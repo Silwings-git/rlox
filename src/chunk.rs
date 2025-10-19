@@ -51,7 +51,16 @@ opcodes! {
     // >
     Gerater=0x13,
     // <
-    Less=0x14
+    Less=0x14,
+    // 弹出栈顶值并将其遗弃
+    Pop=0x15,
+    // 定义全局变量
+    DefineGlobal=0x16,
+    // 获取全局变量
+    GetGlobal=0x17,
+    // 赋值全局变量
+    SetGlobal=0x18,
+    Print=0x99
 }
 
 // 操作数类型定义
@@ -155,7 +164,7 @@ impl Chunk {
                     }
                     _ => {
                         println!(
-                            "读取 OpConstant 失败：在偏移量 {offset} 处缺少操作数（需要访问偏移量 {operand_offset}，总长度：{})",
+                            "Failed to read OpConstant: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
                             self.code.len()
                         );
                         None
@@ -174,6 +183,59 @@ impl Chunk {
             OpCode::Equal => Some(Instruction::new(OpCode::Equal, Operand::None, 1)),
             OpCode::Gerater => Some(Instruction::new(OpCode::Gerater, Operand::None, 1)),
             OpCode::Less => Some(Instruction::new(OpCode::Less, Operand::None, 1)),
+            OpCode::Print => Some(Instruction::new(OpCode::Print, Operand::None, 1)),
+            OpCode::Pop => Some(Instruction::new(OpCode::Pop, Operand::None, 1)),
+            OpCode::DefineGlobal => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => Some(Instruction::new(
+                        OpCode::DefineGlobal,
+                        Operand::U8(*operand),
+                        2,
+                    )),
+                    None => {
+                        println!(
+                            "Failed to read OpDefineGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
+            OpCode::GetGlobal => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => Some(Instruction::new(
+                        OpCode::GetGlobal,
+                        Operand::U8(*operand),
+                        2,
+                    )),
+                    None => {
+                        println!(
+                            "Failed to read OpGetGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
+            OpCode::SetGlobal => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => Some(Instruction::new(
+                        OpCode::SetGlobal,
+                        Operand::U8(*operand),
+                        2,
+                    )),
+                    None => {
+                        println!(
+                            "Failed to read OpSetGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
         }
     }
 

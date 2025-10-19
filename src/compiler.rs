@@ -36,10 +36,120 @@ impl<'a> Parser<'a> {
 
     pub fn compile(&mut self) -> bool {
         self.advance();
-        self.expression();
-        self.consume(TokenType::Eof, "Expect end of expression.");
+        while !self.match_token(TokenType::Eof) {
+            self.declaration();
+        }
         self.end_compiler();
         !self.had_error
+    }
+
+    /// 解析声明
+    fn declaration(&mut self) {
+        if self.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.statement();
+        }
+        if self.panic_mode {
+            self.synchronize();
+        }
+    }
+
+    /// 解析变量声明
+    fn var_declaration(&mut self) {
+        let global = self.parse_variable("Expect variable name.");
+
+        if self.match_token(TokenType::Equal) {
+            self.expression();
+        } else {
+            self.emit_op_code(OpCode::Nil);
+        }
+
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        );
+
+        self.define_variable(global);
+    }
+
+    /// 定义变量
+    fn define_variable(&mut self, variable: Operand) {
+        self.emit_op_code_and_operand(OpCode::DefineGlobal, variable);
+    }
+
+    /// 解析变量名
+    fn parse_variable(&mut self, error_message: &str) -> Operand {
+        self.consume(TokenType::Identifier, error_message);
+        let previous = &self.previous.clone();
+        self.identifier_constant(previous)
+    }
+
+    fn identifier_constant(&mut self, identifier: &Token) -> Operand {
+        self.make_constant(identifier.lexeme)
+    }
+
+    /// 跳过标识,直到遇到语句边界
+    /// 语句边界包括可以结束一条语句的前驱标识,如分号;
+    /// 或者是能开始一条语句的后续标识,例如控制流或声明语句的关键字之一
+    fn synchronize(&mut self) {
+        self.panic_mode = false;
+
+        while self.current.token_type != TokenType::Eof {
+            if self.previous.token_type == TokenType::Semicolon {
+                return;
+            }
+            match self.current.token_type {
+                TokenType::Class
+                | TokenType::Fun
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => {
+                    return;
+                }
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
+    /// 解析语句
+    fn statement(&mut self) {
+        if self.match_token(TokenType::Print) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    /// 解析表达式语句(一个表达式后面跟着一个分号)
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.consume(TokenType::Semicolon, "Expect ';' after expression.");
+        self.emit_op_code(OpCode::Pop);
+    }
+
+    /// 如果当前标识是指定类型,就消耗该标识并返回true,否则就不处理并返回false
+    fn match_token(&mut self, token_type: TokenType) -> bool {
+        if !self.check(token_type) {
+            return false;
+        }
+        self.advance();
+        true
+    }
+
+    fn check(&self, token_type: TokenType) -> bool {
+        self.current.token_type == token_type
+    }
+
+    /// 解析语句
+    fn print_statement(&mut self) {
+        self.expression();
+        self.consume(TokenType::Semicolon, "Expect ';' after value.");
+        self.emit_op_code(OpCode::Print);
     }
 
     fn expression(&mut self) {
@@ -122,7 +232,7 @@ impl<'a> Parser<'a> {
         } else if token.token_type == TokenType::Error {
             // Nothing
         } else {
-            eprintln!(" at '{}'", &token.lexeme);
+            eprint!(" at '{}'", &token.lexeme);
         }
 
         eprintln!(": {message}");
@@ -160,7 +270,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析数值
-    fn number(&mut self) {
+    fn number(&mut self, _can_assign: bool) {
         let value = self.previous.lexeme.parse::<f64>();
         match value {
             Ok(v) => self.emit_constant(v),
@@ -174,13 +284,13 @@ impl<'a> Parser<'a> {
     /// 括号表达式的唯一作用是语法上的: 允许在需要高优先级的地方插入一个低优先级的表达式.
     /// 因此,它本身没有运行时语法,也就不需要发出如何字节码.
     /// 对expression()的内部调用负责为括号内的表达式生成字节码
-    fn grouping(&mut self) {
+    fn grouping(&mut self, _can_assign: bool) {
         self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after expression.");
     }
 
     /// 解析一元表达式
-    fn unary(&mut self) {
+    fn unary(&mut self, _can_assign: bool) {
         let operator_type = self.previous.token_type.clone();
 
         // 解析优先级大于等于unary的表达式
@@ -194,7 +304,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析二元操作符
-    fn binary(&mut self) {
+    fn binary(&mut self, _can_assign: bool) {
         let operator_type = self.previous.token_type.clone();
         let parse_rule = match self.get_rule(&operator_type) {
             Some(parse_rule) => parse_rule,
@@ -234,6 +344,8 @@ impl<'a> Parser<'a> {
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
 
+        let can_assign = precedence <= Precedence::Assignment;
+
         // 为当前标识查找对应的前缀解析器
         // 根据定义，第一个标识总是属于某种前缀表达式。它可能作为一个操作数嵌套在一个或多个中缀表达式中，
         // 但是当我们从左到右阅读代码时，碰到的第一个标识总是属于一个前缀表达式。
@@ -241,7 +353,9 @@ impl<'a> Parser<'a> {
             .get_rule(&self.previous.token_type)
             .and_then(|rule| rule.prefix)
         {
-            Some(prefix_rule) => prefix_rule(self),
+            Some(prefix_fn) => {
+                prefix_fn(self, can_assign);
+            }
             None => {
                 self.error_at_previous("Expect expression.");
                 return;
@@ -252,7 +366,7 @@ impl<'a> Parser<'a> {
         while self
             .get_rule(&self.current.token_type)
             // 该中缀解析器的优先级应当大于等于指定的precedence
-            .filter(|rule| rule.precedence as u8 >= precedence as u8)
+            .filter(|rule| rule.precedence >= precedence)
             .is_some()
         {
             // 如果找得到,我们推进到下一个token,新得到的token是中缀表达式的右操作数
@@ -262,7 +376,12 @@ impl<'a> Parser<'a> {
                 .get_rule(&self.previous.token_type)
                 .and_then(|rule| rule.infix)
             {
-                Some(infix) => infix(self),
+                Some(infix_fn) => {
+                    infix_fn(self, can_assign);
+                    if can_assign && self.match_token(TokenType::Equal) {
+                        self.error_at_current("Invalid assignment target.");
+                    }
+                }
                 None => {
                     self.error_at_previous("Expect expression.");
                     return;
@@ -271,7 +390,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn string(&mut self) {
+    fn string(&mut self, _can_assign: bool) {
         let value = self
             .previous
             .lexeme
@@ -286,7 +405,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析字面量
-    fn literal(&mut self) {
+    fn literal(&mut self, _can_assign: bool) {
         match self.previous.token_type {
             TokenType::True => self.emit_op_code(OpCode::True),
             TokenType::False => self.emit_op_code(OpCode::False),
@@ -298,9 +417,26 @@ impl<'a> Parser<'a> {
     fn get_rule(&self, operator_type: &TokenType) -> Option<&ParseRule<'a>> {
         self.rules.get(operator_type)
     }
+
+    fn variable(&mut self, can_assign: bool) {
+        let name = &self.previous.clone();
+        self.named_variable(name, can_assign);
+    }
+
+    fn named_variable(&mut self, name: &Token, can_assign: bool) {
+        let arg = self.identifier_constant(name);
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.emit_op_code_and_operand(OpCode::SetGlobal, arg);
+        } else {
+            self.emit_op_code_and_operand(OpCode::GetGlobal, arg);
+        }
+    }
 }
 
 /// 解析规则,其被映射到一个类型标识
+/// ParseRule 仅为需要参与表达式解析的 TokenType 定义，
+/// 其他 TokenType 因不涉及表达式的递归解析而无需具体规则
 struct ParseRule<'a> {
     // 编译以该类型标识为起点的前缀表达式的函数
     prefix: Option<ParseFn<'a>>,
@@ -310,7 +446,7 @@ struct ParseRule<'a> {
     precedence: Precedence,
 }
 
-type ParseFn<'a> = fn(&mut Parser<'a>);
+type ParseFn<'a> = fn(&mut Parser<'a>, can_assgin: bool);
 
 impl<'a> Default for ParseRule<'a> {
     fn default() -> Self {
@@ -404,7 +540,10 @@ impl<'a> ParseRule<'a> {
             TokenType::LessEqual,
             Self::new(None, Some(Parser::binary), Precedence::Comparison),
         );
-        rules.insert(TokenType::Identifier, ParseRule::default());
+        rules.insert(
+            TokenType::Identifier,
+            Self::new(Some(Parser::variable), None, Precedence::None),
+        );
         rules.insert(
             TokenType::String,
             Self::new(Some(Parser::string), None, Precedence::None),
@@ -451,7 +590,7 @@ impl<'a> ParseRule<'a> {
 macro_rules! precedence {
     ($($name:ident = $val:expr),*) => {
         /// 操作符优先级,数值越小优先级越小
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Eq)]
         #[repr(u8)]
         pub enum Precedence {
             $($name = $val),*
@@ -495,6 +634,24 @@ precedence! {
 impl Precedence {
     fn higher(&self) -> Option<Precedence> {
         Precedence::try_from(*self as u8 + 1).ok()
+    }
+}
+
+impl PartialEq for Precedence {
+    fn eq(&self, other: &Self) -> bool {
+        *self as u8 == *other as u8
+    }
+}
+
+impl PartialOrd for Precedence {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Precedence {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (*self as u8).cmp(&(*other as u8))
     }
 }
 

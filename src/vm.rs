@@ -18,11 +18,15 @@ macro_rules! binary_op {
     }};
 }
 
+type Table = HashMap<String, Value>;
+
 pub struct VM {
     chunk: Chunk,
     // 始终指向即将执行的指令
     ip: usize,
     stack: Stack,
+    globals: Table,
+    #[allow(dead_code)]
     strings: HashSet<String>,
 }
 
@@ -84,6 +88,8 @@ impl VM {
             chunk: Chunk::new(),
             ip: 0,
             stack: Stack::new(config.max_stack_depth),
+            globals: HashMap::new(),
+            strings: HashSet::new(),
         }
     }
 
@@ -139,10 +145,6 @@ impl VM {
             let instruction = self.read_byte()?;
             match instruction.op {
                 OpCode::Return => {
-                    print_value(&self.pop().ok_or(InterpretError::RuntimeError(
-                        "return: stack is empty".to_string(),
-                    ))?);
-                    println!();
                     return Ok(());
                 }
                 OpCode::Constant => {
@@ -173,7 +175,9 @@ impl VM {
                             self.push(n1 + n2)?
                         }
                         _ => {
-                            Err(self.runtime_error("Operands must be two numbers or two strings."))?
+                            return Err(
+                                self.runtime_error("Operands must be two numbers or two strings.")
+                            );
                         }
                     }
                 }
@@ -200,8 +204,77 @@ impl VM {
                 }
                 OpCode::Gerater => binary_op!(self,Value::Bool,>),
                 OpCode::Less => binary_op!(self,Value::Bool,<),
+                OpCode::Print => {
+                    print_value(
+                        &self
+                            .pop()
+                            .ok_or(InterpretError::RuntimeError("print: stack is empty".into()))?,
+                    );
+                    println!();
+                    Ok(())?
+                }
+                OpCode::Pop => {
+                    self.pop()
+                        .ok_or(InterpretError::RuntimeError("pop: stack is empty".into()))?;
+                }
+                OpCode::DefineGlobal => {
+                    let name = self.read_string(&instruction.operand).ok_or(
+                        InterpretError::RuntimeError(
+                            "Failed to read global variable name from constants.".into(),
+                        ),
+                    )?;
+                    self.globals.insert(
+                        name.as_string()?.into_owned(),
+                        // 允许全局变量声明为nil
+                        self.peek(0).cloned().unwrap_or(Value::Nil),
+                    );
+                    self.pop().ok_or(InterpretError::RuntimeError(
+                        "define global: stack is empty".into(),
+                    ))?;
+                }
+                OpCode::GetGlobal => {
+                    let name = self
+                        .read_string(&instruction.operand)
+                        .ok_or(InterpretError::RuntimeError(
+                            "Failed to read global variable name from constants.".into(),
+                        ))?
+                        .as_string()?;
+
+                    let value = self.globals.get(name.as_ref());
+                    match value {
+                        Some(v) => {
+                            self.push(v.clone())?;
+                        }
+                        None => {
+                            return Err(self
+                                .runtime_error(&format!("Undefined variable {}", name.as_ref())));
+                        }
+                    }
+                }
+                OpCode::SetGlobal => {
+                    let name_value = self.read_string(&instruction.operand).ok_or(
+                        InterpretError::RuntimeError(
+                            "Failed to read global variable name from constants.".into(),
+                        ),
+                    )?;
+
+                    let name = name_value.as_string()?;
+                    if self.globals.contains_key(name.as_ref()) {
+                        self.globals.insert(
+                            name.into_owned(),
+                            self.peek(0).cloned().unwrap_or(Value::Nil),
+                        );
+                    } else {
+                        // 如果变量未声明,返回错误
+                        return Err(self.runtime_error(&format!("Undefined variable {name}")));
+                    }
+                }
             }
         }
+    }
+
+    fn read_string(&self, operand: &Operand) -> Option<&Value> {
+        self.chunk.read_constant(operand)
     }
 
     fn runtime_error(&mut self, arg: &str) -> InterpretError {

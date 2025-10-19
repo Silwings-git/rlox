@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 use crate::vm::InterpretError;
 
@@ -40,6 +40,12 @@ impl From<String> for Value {
     }
 }
 
+impl From<&str> for Value {
+    fn from(value: &str) -> Self {
+        Self::String(value.into())
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -57,6 +63,15 @@ impl Value {
             Value::Number(v) => Ok(*v),
             v => Err(InterpretError::RuntimeError(format!(
                 "cannot convert to number: {v:?}",
+            ))),
+        }
+    }
+
+    pub fn as_string(&self) -> Result<Cow<str>, InterpretError> {
+        match self {
+            Value::String(v) => Ok(Cow::Borrowed(v)),
+            v => Err(InterpretError::RuntimeError(format!(
+                "cannot convert to string: {v:?}",
             ))),
         }
     }
