@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
 use crate::config::VMConfig;
-use crate::value::{InternedString, Value, print_value};
+use crate::string_pool::{InternedString, StringPool};
+use crate::value::{Value, print_value};
 
 macro_rules! binary_op {
     ($vm:expr, $value_type:path, $op:tt) => {{
@@ -26,7 +27,7 @@ pub struct VM {
     ip: usize,
     stack: Stack,
     globals: Table,
-    strings: HashSet<InternedString>,
+    strings: StringPool,
 }
 
 struct Stack {
@@ -88,7 +89,7 @@ impl VM {
             ip: 0,
             stack: Stack::new(config.max_stack_depth),
             globals: HashMap::new(),
-            strings: HashSet::new(),
+            strings: Default::default(),
         }
     }
 
@@ -108,17 +109,8 @@ impl VM {
         self.stack.reset_stack();
     }
 
-    fn intern<T: AsRef<InternedString>>(&mut self, string: T) -> InternedString {
-        // 如果字符串已存在，则直接返回其克隆
-        if let Some(existing_string) = self.strings.get(string.as_ref()).cloned() {
-            eprintln!("驻留字符串被复用: {existing_string}");
-            return existing_string;
-        }
-
-        // 否则将字符串插入集合，并返回其所有权
-        self.strings.insert(string.as_ref().to_owned());
-        eprintln!("新增驻留字符串: {}", string.as_ref());
-        string.as_ref().to_owned()
+    fn intern_interned(&mut self, s: InternedString) -> InternedString {
+        self.strings.intern_interned(s)
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
@@ -161,13 +153,12 @@ impl VM {
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant(&instruction.operand)?;
-                    let constant = match constant {
-                        Value::String(s) => Value::String(self.intern(s.clone())),
-                        Value::Bool(b) => Value::Bool(*b),
-                        Value::Nil => Value::Nil,
-                        Value::Number(n) => Value::Number(*n),
-                    };
-                    self.push(constant)?;
+                    if let Value::String(s) = constant {
+                        let s = self.intern_interned(s.to_owned());
+                        self.push(s)?;
+                    } else {
+                        self.push(constant.clone())?;
+                    }
                 }
                 OpCode::Negate => {
                     let number = self
@@ -241,7 +232,7 @@ impl VM {
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
-                    let name = self.intern(name.as_string()?.clone());
+                    let name = self.intern_interned(name.as_string()?.clone());
                     self.globals.insert(
                         name,
                         // 允许全局变量声明为nil
@@ -258,7 +249,8 @@ impl VM {
                             "Failed to read global variable name from constants.".into(),
                         ))?
                         .as_string()?;
-
+                    
+                    // todo 执行`var a=1;var b=a;`时,这里的name没有被驻留,可能是第二次使用a时,a是作为操作数被写入,如何操作数没做驻留.需要解决这个问题.
                     let value = self.globals.get(name);
                     match value {
                         Some(v) => {
@@ -272,15 +264,13 @@ impl VM {
                     }
                 }
                 OpCode::SetGlobal => {
-                    let name_value = self.read_string(&instruction.operand).ok_or(
+                    let name = self.read_string(&instruction.operand).ok_or(
                         InterpretError::RuntimeError(
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
-
-                    let name = name_value.as_string()?;
-                    if self.globals.contains_key(name) {
-                        let name = self.intern(name.clone());
+                    let name = self.intern_interned(name.as_string()?.clone());
+                    if self.globals.contains_key(&name) {
                         self.globals
                             .insert(name, self.peek(0).cloned().unwrap_or(Value::Nil));
                     } else {

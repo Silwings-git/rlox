@@ -7,7 +7,8 @@ use std::{
 
 use crate::{
     chunk::{Chunk, OpCode, Operand},
-    value::{InternedString, Value},
+    string_pool::InternedString,
+    value::Value,
 };
 
 pub struct Parser<'a> {
@@ -86,7 +87,7 @@ impl<'a> Parser<'a> {
     }
 
     fn identifier_constant(&mut self, identifier: &Token) -> Operand {
-        self.make_constant(InternedString::new(identifier.lexeme))
+        self.make_constant(InternedString::new(identifier.lexeme.into()))
     }
 
     /// 跳过标识,直到遇到语句边界
@@ -397,7 +398,7 @@ impl<'a> Parser<'a> {
             .parse::<String>()
             .and_then(|s| String::from_str(s.trim_start_matches('"').trim_end_matches('"')));
         match value {
-            Ok(v) => self.emit_constant(InternedString::new(&v)),
+            Ok(v) => self.emit_constant(InternedString::new(v.into())),
             Err(_) => {
                 self.error_at_previous("Invalid string literal.");
             }

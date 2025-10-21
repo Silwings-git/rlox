@@ -14,6 +14,7 @@ mod chunk;
 mod compiler;
 mod config;
 mod debug;
+mod string_pool;
 mod value;
 mod vm;
 
