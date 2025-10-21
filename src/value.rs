@@ -21,6 +21,12 @@ pub struct InternedString {
     hash: u64,
 }
 
+impl AsRef<InternedString> for InternedString {
+    fn as_ref(&self) -> &InternedString {
+        self
+    }
+}
+
 impl PartialEq for InternedString {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.str, &other.str) || self.str == other.str

@@ -108,15 +108,17 @@ impl VM {
         self.stack.reset_stack();
     }
 
-    fn intern(&mut self, string: InternedString) -> InternedString {
+    fn intern<T: AsRef<InternedString>>(&mut self, string: T) -> InternedString {
         // 如果字符串已存在，则直接返回其克隆
-        if let Some(existing_string) = self.strings.get(&string).cloned() {
+        if let Some(existing_string) = self.strings.get(string.as_ref()).cloned() {
+            eprintln!("驻留字符串被复用: {existing_string}");
             return existing_string;
         }
 
         // 否则将字符串插入集合，并返回其所有权
-        self.strings.insert(string.clone());
-        string
+        self.strings.insert(string.as_ref().to_owned());
+        eprintln!("新增驻留字符串: {}", string.as_ref());
+        string.as_ref().to_owned()
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
@@ -159,7 +161,13 @@ impl VM {
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant(&instruction.operand)?;
-                    self.push(constant.clone())?;
+                    let constant = match constant {
+                        Value::String(s) => Value::String(self.intern(s.clone())),
+                        Value::Bool(b) => Value::Bool(*b),
+                        Value::Nil => Value::Nil,
+                        Value::Number(n) => Value::Number(*n),
+                    };
+                    self.push(constant)?;
                 }
                 OpCode::Negate => {
                     let number = self
