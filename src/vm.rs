@@ -4,7 +4,7 @@ use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
 use crate::config::VMConfig;
-use crate::value::{Value, print_value};
+use crate::value::{InternedString, Value, print_value};
 
 macro_rules! binary_op {
     ($vm:expr, $value_type:path, $op:tt) => {{
@@ -18,7 +18,7 @@ macro_rules! binary_op {
     }};
 }
 
-type Table = HashMap<String, Value>;
+type Table = HashMap<InternedString, Value>;
 
 pub struct VM {
     chunk: Chunk,
@@ -26,8 +26,7 @@ pub struct VM {
     ip: usize,
     stack: Stack,
     globals: Table,
-    #[allow(dead_code)]
-    strings: HashSet<String>,
+    strings: HashSet<InternedString>,
 }
 
 struct Stack {
@@ -109,6 +108,17 @@ impl VM {
         self.stack.reset_stack();
     }
 
+    fn intern(&mut self, string: InternedString) -> InternedString {
+        // 如果字符串已存在，则直接返回其克隆
+        if let Some(existing_string) = self.strings.get(&string).cloned() {
+            return existing_string;
+        }
+
+        // 否则将字符串插入集合，并返回其所有权
+        self.strings.insert(string.clone());
+        string
+    }
+
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
         let mut chunk = Chunk::new();
 
@@ -166,8 +176,8 @@ impl VM {
                         (Some(Value::String(s2)), Some(Value::String(s1))) => {
                             self.pop().unwrap();
                             self.pop().unwrap();
-                            let added = s1 + &s2;
-                            self.push(added)?
+                            // 动态字符串不驻留
+                            self.push(s1 + s2)?
                         }
                         (Some(Value::Number(n2)), Some(Value::Number(n1))) => {
                             self.pop().unwrap();
@@ -223,8 +233,9 @@ impl VM {
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
+                    let name = self.intern(name.as_string()?.clone());
                     self.globals.insert(
-                        name.as_string()?.into_owned(),
+                        name,
                         // 允许全局变量声明为nil
                         self.peek(0).cloned().unwrap_or(Value::Nil),
                     );
@@ -240,14 +251,15 @@ impl VM {
                         ))?
                         .as_string()?;
 
-                    let value = self.globals.get(name.as_ref());
+                    let value = self.globals.get(name);
                     match value {
                         Some(v) => {
                             self.push(v.clone())?;
                         }
                         None => {
-                            return Err(self
-                                .runtime_error(&format!("Undefined variable {}", name.as_ref())));
+                            return Err(
+                                self.runtime_error(&format!("Undefined variable {}", &name))
+                            );
                         }
                     }
                 }
@@ -259,11 +271,10 @@ impl VM {
                     )?;
 
                     let name = name_value.as_string()?;
-                    if self.globals.contains_key(name.as_ref()) {
-                        self.globals.insert(
-                            name.into_owned(),
-                            self.peek(0).cloned().unwrap_or(Value::Nil),
-                        );
+                    if self.globals.contains_key(name) {
+                        let name = self.intern(name.clone());
+                        self.globals
+                            .insert(name, self.peek(0).cloned().unwrap_or(Value::Nil));
                     } else {
                         // 如果变量未声明,返回错误
                         return Err(self.runtime_error(&format!("Undefined variable {name}")));

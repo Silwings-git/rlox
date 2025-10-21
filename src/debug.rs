@@ -30,39 +30,35 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
     };
 
     match instruction.op {
-        OpCode::Return => simple_instruction("OP_RETURN", offset),
-        OpCode::Constant => constant_instruction("OP_CONSTANT", chunk, instruction, offset),
-        OpCode::Negate => simple_instruction("OP_NEGATE", offset),
-        OpCode::Add => simple_instruction("OP_ADD", offset),
-        OpCode::Subtract => simple_instruction("OP_SUBTRACT", offset),
-        OpCode::Multiply => simple_instruction("OP_MULTIPLY", offset),
-        OpCode::Divide => simple_instruction("OP_DIVIDE", offset),
-        OpCode::True => simple_instruction("OP_TRUE", offset),
-        OpCode::False => simple_instruction("OP_FALSE", offset),
-        OpCode::Nil => simple_instruction("OP_NIL", offset),
-        OpCode::Not => simple_instruction("OP_NOT", offset),
-        OpCode::Equal => simple_instruction("OP_EQUAL", offset),
-        OpCode::Gerater => simple_instruction("OP_GERATER", offset),
-        OpCode::Less => simple_instruction("OP_LESS", offset),
-        OpCode::Print => simple_instruction("OP_PRINT", offset),
-        OpCode::Pop => simple_instruction("OP_POP", offset),
-        OpCode::DefineGlobal => simple_instruction("OP_DEFINE_GLOBAL", offset),
-        OpCode::GetGlobal => simple_instruction("OP_GET_GLOBAL", offset),
-        OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL", offset),
+        OpCode::Return => simple_instruction("OP_RETURN"),
+        OpCode::Constant => constant_instruction("OP_CONSTANT", chunk, &instruction),
+        OpCode::Negate => simple_instruction("OP_NEGATE"),
+        OpCode::Add => simple_instruction("OP_ADD"),
+        OpCode::Subtract => simple_instruction("OP_SUBTRACT"),
+        OpCode::Multiply => simple_instruction("OP_MULTIPLY"),
+        OpCode::Divide => simple_instruction("OP_DIVIDE"),
+        OpCode::True => simple_instruction("OP_TRUE"),
+        OpCode::False => simple_instruction("OP_FALSE"),
+        OpCode::Nil => simple_instruction("OP_NIL"),
+        OpCode::Not => simple_instruction("OP_NOT"),
+        OpCode::Equal => simple_instruction("OP_EQUAL"),
+        OpCode::Gerater => simple_instruction("OP_GERATER"),
+        OpCode::Less => simple_instruction("OP_LESS"),
+        OpCode::Print => simple_instruction("OP_PRINT"),
+        OpCode::Pop => simple_instruction("OP_POP"),
+        OpCode::DefineGlobal => simple_instruction("OP_DEFINE_GLOBAL"),
+        OpCode::GetGlobal => simple_instruction("OP_GET_GLOBAL"),
+        OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL"),
     }
+
+    offset + instruction.len
 }
 
-fn simple_instruction(name: &str, offset: usize) -> usize {
+fn simple_instruction(name: &str) {
     println!("{name}");
-    offset + 1
 }
 
-fn constant_instruction(
-    name: &str,
-    chunk: &Chunk,
-    instruction: Instruction,
-    offset: usize,
-) -> usize {
+fn constant_instruction(name: &str, chunk: &Chunk, instruction: &Instruction) {
     print!("{:<16} {:>4} ", name, instruction.operand);
     let constant = chunk.read_constant(&instruction.operand);
     if let Some(v) = constant {
@@ -71,5 +67,4 @@ fn constant_instruction(
     } else {
         println!("常量池中未找到目标常量, 指令信息: {instruction:?}");
     }
-    offset + instruction.len
 }

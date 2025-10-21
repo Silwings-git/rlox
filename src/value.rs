@@ -1,4 +1,9 @@
-use std::{borrow::Cow, fmt::Display};
+use std::{
+    fmt::Display,
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::Add,
+    rc::Rc,
+};
 
 use crate::vm::InterpretError;
 
@@ -7,7 +12,70 @@ pub enum Value {
     Bool(bool),
     Nil,
     Number(f64),
-    String(String),
+    String(InternedString),
+}
+
+#[derive(Debug, Clone)]
+pub struct InternedString {
+    str: Rc<str>,
+    hash: u64,
+}
+
+impl PartialEq for InternedString {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.str, &other.str) || self.str == other.str
+    }
+}
+
+impl Eq for InternedString {}
+
+impl Hash for InternedString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl Display for InternedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.str)
+    }
+}
+
+impl Add for &InternedString {
+    type Output = InternedString;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let combined = format!("{}{}", self.as_str(), rhs.as_str());
+        InternedString::new(&combined)
+    }
+}
+
+impl Add for InternedString {
+    type Output = InternedString;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let combined = format!("{}{}", self.as_str(), rhs.as_str());
+        InternedString::new(&combined)
+    }
+}
+
+impl InternedString {
+    pub fn new(s: &str) -> Self {
+        let hash = {
+            let mut hasher = DefaultHasher::new();
+            s.hash(&mut hasher);
+            hasher.finish()
+        };
+        Self {
+            str: Rc::from(s),
+            hash,
+        }
+    }
+
+    /// 暴露内部字符串的不可变引用
+    pub fn as_str(&self) -> &str {
+        &self.str
+    }
 }
 
 impl PartialEq for Value {
@@ -16,7 +84,7 @@ impl PartialEq for Value {
             (Self::Bool(r1), Self::Bool(r2)) => r1 == r2,
             (Self::Number(r1), Self::Number(r2)) => r1 == r2,
             (Self::Nil, Self::Nil) => true,
-            (Self::String(str1), Self::String(str2)) => str1.eq(str2),
+            (Self::String(str1), Self::String(str2)) => str1 == str2,
             _ => false,
         }
     }
@@ -34,15 +102,9 @@ impl From<f64> for Value {
     }
 }
 
-impl From<String> for Value {
-    fn from(value: String) -> Self {
+impl From<InternedString> for Value {
+    fn from(value: InternedString) -> Self {
         Self::String(value)
-    }
-}
-
-impl From<&str> for Value {
-    fn from(value: &str) -> Self {
-        Self::String(value.into())
     }
 }
 
@@ -67,9 +129,9 @@ impl Value {
         }
     }
 
-    pub fn as_string(&self) -> Result<Cow<str>, InterpretError> {
+    pub fn as_string(&self) -> Result<&InternedString, InterpretError> {
         match self {
-            Value::String(v) => Ok(Cow::Borrowed(v)),
+            Value::String(v) => Ok(v),
             v => Err(InterpretError::RuntimeError(format!(
                 "cannot convert to string: {v:?}",
             ))),
