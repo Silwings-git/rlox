@@ -12,10 +12,8 @@ pub struct StringPool {
 }
 
 impl StringPool {
-    #[allow(dead_code)]
     pub fn intern(&mut self, s: &str) -> InternedString {
         if let Some(existing) = self.pool.get(s) {
-            eprintln!("驻留字符串被复用: {existing}");
             return existing.clone();
         }
 
@@ -24,11 +22,10 @@ impl StringPool {
 
         self.pool.insert(rc, interned.clone());
 
-        eprintln!("新增驻留字符串: {interned}");
         interned
     }
 
-    pub fn intern_interned(&mut self, s: InternedString) -> InternedString {
+    pub fn intern_interned(&mut self, s: &InternedString) -> InternedString {
         if let Some(existing) = self.pool.get(&s.str) {
             existing.clone()
         } else {
@@ -54,7 +51,7 @@ impl AsRef<InternedString> for InternedString {
 
 impl PartialEq for InternedString {
     fn eq(&self, other: &Self) -> bool {
-        dbg!(Rc::ptr_eq(&self.str, &other.str)) || dbg!(self.str == other.str)
+        Rc::ptr_eq(&self.str, &other.str) || self.str == other.str
     }
 }
 
@@ -68,7 +65,7 @@ impl Hash for InternedString {
 
 impl Display for InternedString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.str)
+        write!(f, "{:p}:{}", self.str, self.str)
     }
 }
 

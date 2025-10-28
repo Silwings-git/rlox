@@ -109,7 +109,7 @@ impl VM {
         self.stack.reset_stack();
     }
 
-    fn intern_interned(&mut self, s: InternedString) -> InternedString {
+    fn intern_interned(&mut self, s: &InternedString) -> InternedString {
         self.strings.intern_interned(s)
     }
 
@@ -125,6 +125,7 @@ impl VM {
     }
 
     pub fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), InterpretError> {
+        self.intern_chunk_constants(&chunk);
         self.chunk = chunk;
         self.ip = 0;
         self.run()
@@ -153,12 +154,7 @@ impl VM {
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant(&instruction.operand)?;
-                    if let Value::String(s) = constant {
-                        let s = self.intern_interned(s.to_owned());
-                        self.push(s)?;
-                    } else {
-                        self.push(constant.clone())?;
-                    }
+                    self.push(constant.clone())?
                 }
                 OpCode::Negate => {
                     let number = self
@@ -232,9 +228,8 @@ impl VM {
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
-                    let name = self.intern_interned(name.as_string()?.clone());
                     self.globals.insert(
-                        name,
+                        name.as_string()?.to_owned(),
                         // 允许全局变量声明为nil
                         self.peek(0).cloned().unwrap_or(Value::Nil),
                     );
@@ -249,7 +244,7 @@ impl VM {
                             "Failed to read global variable name from constants.".into(),
                         ))?
                         .as_string()?;
-                    
+
                     // todo 执行`var a=1;var b=a;`时,这里的name没有被驻留,可能是第二次使用a时,a是作为操作数被写入,如何操作数没做驻留.需要解决这个问题.
                     let value = self.globals.get(name);
                     match value {
@@ -269,10 +264,10 @@ impl VM {
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
-                    let name = self.intern_interned(name.as_string()?.clone());
-                    if self.globals.contains_key(&name) {
+                    let name = name.as_string()?;
+                    if self.globals.contains_key(name) {
                         self.globals
-                            .insert(name, self.peek(0).cloned().unwrap_or(Value::Nil));
+                            .insert(name.to_owned(), self.peek(0).cloned().unwrap_or(Value::Nil));
                     } else {
                         // 如果变量未声明,返回错误
                         return Err(self.runtime_error(&format!("Undefined variable {name}")));
@@ -307,5 +302,13 @@ impl VM {
             .ok_or(InterpretError::RuntimeError(
                 "Cannot find the constant".to_string(),
             ))
+    }
+
+    fn intern_chunk_constants(&mut self, chunk: &Chunk) {
+        for ele in chunk.constants().into_iter() {
+            if let Value::String(s) = ele {
+                self.intern_interned(s);
+            }
+        }
     }
 }

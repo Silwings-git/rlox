@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     chunk::{Chunk, OpCode, Operand},
-    string_pool::InternedString,
+    string_pool::{InternedString, StringPool},
     value::Value,
 };
 
@@ -20,6 +20,7 @@ pub struct Parser<'a> {
     panic_mode: bool,
     compiling_chunk: &'a mut Chunk,
     rules: HashMap<TokenType, ParseRule<'a>>,
+    strings: StringPool,
 }
 
 impl<'a> Parser<'a> {
@@ -32,7 +33,12 @@ impl<'a> Parser<'a> {
             panic_mode: false,
             compiling_chunk: chunk,
             rules: ParseRule::init_rules(),
+            strings: Default::default(),
         }
+    }
+
+    fn intern_interned(&mut self, s: &str) -> InternedString {
+        self.strings.intern(s)
     }
 
     pub fn compile(&mut self) -> bool {
@@ -87,7 +93,8 @@ impl<'a> Parser<'a> {
     }
 
     fn identifier_constant(&mut self, identifier: &Token) -> Operand {
-        self.make_constant(InternedString::new(identifier.lexeme.into()))
+        let s = self.intern_interned(identifier.lexeme);
+        self.make_constant(Value::String(s))
     }
 
     /// 跳过标识,直到遇到语句边界
@@ -398,7 +405,10 @@ impl<'a> Parser<'a> {
             .parse::<String>()
             .and_then(|s| String::from_str(s.trim_start_matches('"').trim_end_matches('"')));
         match value {
-            Ok(v) => self.emit_constant(InternedString::new(v.into())),
+            Ok(v) => {
+                let s = self.intern_interned(&v);
+                self.emit_constant(Value::String(s));
+            }
             Err(_) => {
                 self.error_at_previous("Invalid string literal.");
             }

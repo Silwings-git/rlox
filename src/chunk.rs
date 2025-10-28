@@ -251,4 +251,8 @@ impl Chunk {
             Operand::U8(index) => self.constants.get_value(*index as usize),
         }
     }
+
+    pub fn constants(&self) -> &ValueArray {
+        &self.constants
+    }
 }

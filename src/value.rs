@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, slice::Iter};
 
 use crate::{string_pool::InternedString, vm::InterpretError};
 
@@ -81,6 +81,16 @@ impl Value {
 #[derive(Debug, Default)]
 pub struct ValueArray {
     values: Vec<Value>,
+}
+
+impl<'a> IntoIterator for &'a ValueArray {
+    type Item = &'a Value;
+
+    type IntoIter = Iter<'a, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter()
+    }
 }
 
 impl ValueArray {
