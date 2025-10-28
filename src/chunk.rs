@@ -54,12 +54,13 @@ opcodes! {
     Less=0x14,
     // 弹出栈顶值并将其遗弃
     Pop=0x15,
+    Popn=0x16,
     // 定义全局变量
-    DefineGlobal=0x16,
+    DefineGlobal=0x17,
     // 获取全局变量
-    GetGlobal=0x17,
+    GetGlobal=0x18,
     // 赋值全局变量
-    SetGlobal=0x18,
+    SetGlobal=0x19,
     Print=0x99
 }
 
@@ -185,6 +186,19 @@ impl Chunk {
             OpCode::Less => Some(Instruction::new(OpCode::Less, Operand::None, 1)),
             OpCode::Print => Some(Instruction::new(OpCode::Print, Operand::None, 1)),
             OpCode::Pop => Some(Instruction::new(OpCode::Pop, Operand::None, 1)),
+            OpCode::Popn => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => Some(Instruction::new(OpCode::Popn, Operand::U8(*operand), 2)),
+                    _ => {
+                        println!(
+                            "Failed to read Popn: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
             OpCode::DefineGlobal => {
                 let operand_offset = offset + 1;
                 match self.code.get(operand_offset) {

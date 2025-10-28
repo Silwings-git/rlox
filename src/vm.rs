@@ -55,6 +55,21 @@ impl Stack {
         self.inner.pop()
     }
 
+    fn popn(&mut self, n: usize) -> Result<Vec<Value>, InterpretError> {
+        if n > self.inner.len() {
+            return Err(InterpretError::RuntimeError(format!(
+                "insufficient stack elements: need {}, got {}",
+                n,
+                self.inner.len()
+            )));
+        }
+        let split_idx = self.inner.len().saturating_sub(n);
+
+        let popped = self.inner.split_off(split_idx);
+
+        Ok(popped)
+    }
+
     fn push<T: Into<Value>>(&mut self, v: T) -> Result<(), InterpretError> {
         if self.inner.len() > self.max_stack_depth {
             return Err(InterpretError::RuntimeError(format!(
@@ -99,6 +114,9 @@ impl VM {
 
     fn pop(&mut self) -> Option<Value> {
         self.stack.pop()
+    }
+    fn popn(&mut self, n: usize) -> Result<Vec<Value>, InterpretError> {
+        self.stack.popn(n)
     }
 
     fn push<T: Into<Value>>(&mut self, v: T) -> Result<(), InterpretError> {
@@ -221,6 +239,13 @@ impl VM {
                 OpCode::Pop => {
                     self.pop()
                         .ok_or(InterpretError::RuntimeError("pop: stack is empty".into()))?;
+                }
+                OpCode::Popn => {
+                    if let Operand::U8(n) = &instruction.operand {
+                        self.popn(*n as usize)?;
+                    } else {
+                        return Err(self.runtime_error("popn: operand is empty."));
+                    }
                 }
                 OpCode::DefineGlobal => {
                     let name = self.read_string(&instruction.operand).ok_or(

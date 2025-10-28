@@ -1,4 +1,5 @@
 use std::{
+    array,
     collections::HashMap,
     iter::Peekable,
     mem,
@@ -11,6 +12,8 @@ use crate::{
     value::Value,
 };
 
+const MAX_LOCAL_SIZE: usize = u8::MAX as usize + 1;
+
 pub struct Parser<'a> {
     scanner: Scanner<'a>,
     previous: Token<'a>,
@@ -21,6 +24,7 @@ pub struct Parser<'a> {
     compiling_chunk: &'a mut Chunk,
     rules: HashMap<TokenType, ParseRule<'a>>,
     strings: StringPool,
+    compiler: Compiler<'a>,
 }
 
 impl<'a> Parser<'a> {
@@ -33,7 +37,8 @@ impl<'a> Parser<'a> {
             panic_mode: false,
             compiling_chunk: chunk,
             rules: ParseRule::init_rules(),
-            strings: Default::default(),
+            strings: StringPool::default(),
+            compiler: Compiler::new(),
         }
     }
 
@@ -82,12 +87,25 @@ impl<'a> Parser<'a> {
 
     /// 定义变量
     fn define_variable(&mut self, variable: Operand) {
+        // 此刻,虚拟机已经执行了变量初始化表达式的代码(如果用户省略了初始化则默认为`nil`),
+        // 并且该值作为唯一保留的临时变量位于栈顶. 另外我们还知道新的局部变量会被分配到栈顶,
+        // 因此,没什么可做的.临时变量直接成为局部变量.
+        if self.compiler.scope_depth > 0 {
+            return;
+        }
         self.emit_op_code_and_operand(OpCode::DefineGlobal, variable);
     }
 
     /// 解析变量名
     fn parse_variable(&mut self, error_message: &str) -> Operand {
         self.consume(TokenType::Identifier, error_message);
+        self.declare_variable();
+        // 如果当前在局部作用域中就退出函数。
+        // 在运行时，不会通过名称查询局部变量。
+        // 不需要将变量的名称放入常量表中，所以如果声明在局部作用域内，则返回一个假的表索引
+        if self.compiler.scope_depth > 0 {
+            return Operand::U8(0);
+        }
         let previous = &self.previous.clone();
         self.identifier_constant(previous)
     }
@@ -95,6 +113,51 @@ impl<'a> Parser<'a> {
     fn identifier_constant(&mut self, identifier: &Token) -> Operand {
         let s = self.intern_interned(identifier.lexeme);
         self.make_constant(Value::String(s))
+    }
+
+    /// 声明局部变量
+    fn declare_variable(&mut self) {
+        // 编译器只记录局部变量.因此如果在顶层全局作用域中就直接退出
+        // 因为全局变量是后期绑定的, 所以编译器不会跟踪它所看到的关于全局变量的声明
+        if self.compiler.scope_depth == 0 {
+            return;
+        }
+
+        let name = &self.previous.clone();
+
+        // 检测同一作用域两个同名变量的情况
+        if self.compiler.local_count > 0 {
+            for index in (0..self.compiler.local_count - 1).rev() {
+                let local = &self.compiler.locals[index];
+                if local.depth != -1 && local.depth < self.compiler.scope_depth {
+                    break;
+                }
+                if Self::identifiers_equal(name, &local.name) {
+                    self.error_at(
+                        name.clone(),
+                        "Already a variable with this name in this scope.",
+                    );
+                }
+            }
+        }
+
+        self.add_local(name.clone());
+    }
+
+    fn identifiers_equal(a: &Token, b: &Token) -> bool {
+        a.lexeme == b.lexeme
+    }
+
+    fn add_local(&mut self, name: Token<'a>) {
+        if self.compiler.local_count == MAX_LOCAL_SIZE {
+            self.error_at(name, "Too many local variables in function.");
+            return;
+        }
+        self.compiler.locals[self.compiler.local_count] = Local {
+            name,
+            depth: self.compiler.scope_depth,
+        };
+        self.compiler.local_count += 1;
     }
 
     /// 跳过标识,直到遇到语句边界
@@ -128,9 +191,38 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) {
         if self.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.match_token(TokenType::LeftBrace) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
         } else {
             self.expression_statement();
         }
+    }
+
+    fn begin_scope(&mut self) {
+        self.compiler.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.compiler.scope_depth -= 1;
+        let mut popn = 0;
+        while self.compiler.local_count > 0
+            && self.compiler.locals[self.compiler.local_count - 1].depth > self.compiler.scope_depth
+        {
+            // 局部变量存储在栈上,因此在退出作用域时需要丢弃它
+            popn += 1;
+            // 通过简单的递减数组长度来丢弃刚刚离开的作用域上的变量
+            self.compiler.local_count -= 1;
+        }
+        self.emit_op_code_and_operand(OpCode::Pop, Operand::U8(popn));
+    }
+
+    fn block(&mut self) {
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            self.declaration();
+        }
+        self.consume(TokenType::RightBrace, "Expect '}' after block.");
     }
 
     /// 解析表达式语句(一个表达式后面跟着一个分号)
@@ -1003,5 +1095,38 @@ impl<'a> Scanner<'a> {
             lexeme: message,
             line: self.line,
         }
+    }
+}
+
+pub struct Compiler<'a> {
+    locals: [Local<'a>; MAX_LOCAL_SIZE],
+    // 记录作用域中有多少局部变量(有多少个数组槽在使用)
+    local_count: usize,
+    // 作用域深度: 正在编译的当前代码外围的代码块数量
+    scope_depth: isize,
+}
+
+#[derive(Default)]
+pub struct Local<'a> {
+    // 变量的名称
+    name: Token<'a>,
+    // 声明局部变量的代码块的作用域深度.
+    // 0是全局作用域, 1是第一个顶层块, 2是它内部的块, 以此类推
+    depth: isize,
+}
+
+impl<'a> Default for Compiler<'a> {
+    fn default() -> Self {
+        Self {
+            locals: array::from_fn(|_i| Local::default()),
+            local_count: Default::default(),
+            scope_depth: Default::default(),
+        }
+    }
+}
+
+impl<'a> Compiler<'a> {
+    fn new() -> Self {
+        Default::default()
     }
 }

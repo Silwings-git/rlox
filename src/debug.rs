@@ -46,6 +46,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::Less => simple_instruction("OP_LESS"),
         OpCode::Print => simple_instruction("OP_PRINT"),
         OpCode::Pop => simple_instruction("OP_POP"),
+        OpCode::Popn => popn_instruction("OP_POPN", &instruction),
         OpCode::DefineGlobal => simple_instruction("OP_DEFINE_GLOBAL"),
         OpCode::GetGlobal => simple_instruction("OP_GET_GLOBAL"),
         OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL"),
@@ -67,4 +68,8 @@ fn constant_instruction(name: &str, chunk: &Chunk, instruction: &Instruction) {
     } else {
         println!("常量池中未找到目标常量, 指令信息: {instruction:?}");
     }
+}
+
+fn popn_instruction(name: &str, instruction: &Instruction) {
+    print!("{:<16} {:>4} ", name, instruction.operand);
 }
