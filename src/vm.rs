@@ -56,6 +56,9 @@ impl Stack {
     }
 
     fn popn(&mut self, n: usize) -> Result<Vec<Value>, InterpretError> {
+        if n == 0 {
+            return Ok(vec![]);
+        }
         if n > self.inner.len() {
             return Err(InterpretError::RuntimeError(format!(
                 "insufficient stack elements: need {}, got {}",
@@ -87,6 +90,18 @@ impl Stack {
 
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    fn get_by_index(&self, index: usize) -> Option<&Value> {
+        self.inner.get(index)
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn set_by_index(&mut self, index: usize, v: Value) {
+        self.inner[index] = v;
     }
 }
 
@@ -270,7 +285,6 @@ impl VM {
                         ))?
                         .as_string()?;
 
-                    // todo 执行`var a=1;var b=a;`时,这里的name没有被驻留,可能是第二次使用a时,a是作为操作数被写入,如何操作数没做驻留.需要解决这个问题.
                     let value = self.globals.get(name);
                     match value {
                         Some(v) => {
@@ -295,9 +309,33 @@ impl VM {
                             .insert(name.to_owned(), self.peek(0).cloned().unwrap_or(Value::Nil));
                     } else {
                         // 如果变量未声明,返回错误
-                        return Err(self.runtime_error(&format!("Undefined variable {name}")));
+                        return Err(
+                            self.runtime_error(&format!("Undefined variable {}", name.as_str()))
+                        );
                     }
                 }
+                OpCode::GetLocal => match instruction.operand {
+                    Operand::U8(index) => {
+                        let v = self
+                            .stack
+                            .get_by_index(index as usize)
+                            .ok_or_else(||
+                                 InterpretError::RuntimeError(format!("GetLocal instruction: index {} is out of bounds for stack (length: {})",                     index, self.stack.len())))?;
+                        self.push(v.clone())?;
+                    }
+                    Operand::None => {
+                        return Err(self.runtime_error("The instruction requires an index operand, but no operand was provided."));
+                    }
+                },
+                OpCode::SetLocal => match instruction.operand {
+                    Operand::U8(index) => {
+                        let v = self.peek(0).cloned().unwrap_or(Value::Nil);
+                        self.stack.set_by_index(index.into(), v);
+                    }
+                    Operand::None => {
+                        return Err(self.runtime_error("The instruction requires an index operand, but no operand was provided."));
+                    }
+                },
             }
         }
     }

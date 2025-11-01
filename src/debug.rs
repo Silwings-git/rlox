@@ -1,5 +1,5 @@
 use crate::{
-    chunk::{Chunk, Instruction, OpCode},
+    chunk::{Chunk, Instruction, OpCode, Operand},
     value::print_value,
 };
 
@@ -50,9 +50,19 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::DefineGlobal => simple_instruction("OP_DEFINE_GLOBAL"),
         OpCode::GetGlobal => simple_instruction("OP_GET_GLOBAL"),
         OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL"),
+        OpCode::GetLocal => byte_instruction("OP_GET_LOCAL", &instruction),
+        OpCode::SetLocal => byte_instruction("OP_SET_LOCAL", &instruction),
     }
 
     offset + instruction.len
+}
+
+fn byte_instruction(name: &str, instruction: &Instruction) {
+    let slot = match instruction.operand {
+        Operand::U8(slot) => slot as usize,
+        Operand::None => 0,
+    };
+    println!("{name:<16} {slot:4}");
 }
 
 fn simple_instruction(name: &str) {
@@ -71,5 +81,5 @@ fn constant_instruction(name: &str, chunk: &Chunk, instruction: &Instruction) {
 }
 
 fn popn_instruction(name: &str, instruction: &Instruction) {
-    print!("{:<16} {:>4} ", name, instruction.operand);
+    println!("{:<16} {:>4} ", name, instruction.operand);
 }

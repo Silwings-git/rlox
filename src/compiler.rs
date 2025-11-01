@@ -91,9 +91,14 @@ impl<'a> Parser<'a> {
         // 并且该值作为唯一保留的临时变量位于栈顶. 另外我们还知道新的局部变量会被分配到栈顶,
         // 因此,没什么可做的.临时变量直接成为局部变量.
         if self.compiler.scope_depth > 0 {
+            self.mark_initialized();
             return;
         }
         self.emit_op_code_and_operand(OpCode::DefineGlobal, variable);
+    }
+
+    fn mark_initialized(&mut self) {
+        self.compiler.locals[self.compiler.local_count - 1].depth = self.compiler.scope_depth
     }
 
     /// 解析变量名
@@ -127,7 +132,7 @@ impl<'a> Parser<'a> {
 
         // 检测同一作用域两个同名变量的情况
         if self.compiler.local_count > 0 {
-            for index in (0..self.compiler.local_count - 1).rev() {
+            for index in (0..self.compiler.local_count).rev() {
                 let local = &self.compiler.locals[index];
                 if local.depth != -1 && local.depth < self.compiler.scope_depth {
                     break;
@@ -149,14 +154,11 @@ impl<'a> Parser<'a> {
     }
 
     fn add_local(&mut self, name: Token<'a>) {
-        if self.compiler.local_count == MAX_LOCAL_SIZE {
+        if self.compiler.local_count >= MAX_LOCAL_SIZE {
             self.error_at(name, "Too many local variables in function.");
             return;
         }
-        self.compiler.locals[self.compiler.local_count] = Local {
-            name,
-            depth: self.compiler.scope_depth,
-        };
+        self.compiler.locals[self.compiler.local_count] = Local { name, depth: -1 };
         self.compiler.local_count += 1;
     }
 
@@ -215,7 +217,9 @@ impl<'a> Parser<'a> {
             // 通过简单的递减数组长度来丢弃刚刚离开的作用域上的变量
             self.compiler.local_count -= 1;
         }
-        self.emit_op_code_and_operand(OpCode::Pop, Operand::U8(popn));
+        if popn > 0 {
+            self.emit_op_code_and_operand(OpCode::Popn, Operand::U8(popn));
+        }
     }
 
     fn block(&mut self) {
@@ -318,7 +322,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 在token处报告错误
-    fn error_at(&mut self, token: Token<'a>, message: &str) {
+    fn error_at(&mut self, token: Token, message: &str) {
         if self.panic_mode {
             return;
         }
@@ -527,13 +531,41 @@ impl<'a> Parser<'a> {
     }
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
-        let arg = self.identifier_constant(name);
+        let get_op;
+        let set_op;
+
+        let mut arg = self.resolve_local(name);
+        if let Operand::None = arg {
+            arg = self.identifier_constant(name);
+            get_op = OpCode::GetGlobal;
+            set_op = OpCode::SetGlobal;
+        } else {
+            get_op = OpCode::GetLocal;
+            set_op = OpCode::SetLocal;
+        }
+
         if can_assign && self.match_token(TokenType::Equal) {
             self.expression();
-            self.emit_op_code_and_operand(OpCode::SetGlobal, arg);
+            self.emit_op_code_and_operand(set_op, arg);
         } else {
-            self.emit_op_code_and_operand(OpCode::GetGlobal, arg);
+            self.emit_op_code_and_operand(get_op, arg);
         }
+    }
+
+    fn resolve_local(&mut self, name: &Token) -> Operand {
+        for index in (0..self.compiler.local_count).rev() {
+            let local = &self.compiler.locals[index];
+            if Self::identifiers_equal(name, &local.name) {
+                if local.depth == -1 {
+                    self.error_at(
+                        name.to_owned(),
+                        "Can't read local variable in its own initializer.",
+                    );
+                }
+                return Operand::U8(index as u8);
+            }
+        }
+        Operand::None
     }
 }
 
@@ -1106,13 +1138,21 @@ pub struct Compiler<'a> {
     scope_depth: isize,
 }
 
-#[derive(Default)]
 pub struct Local<'a> {
     // 变量的名称
     name: Token<'a>,
     // 声明局部变量的代码块的作用域深度.
     // 0是全局作用域, 1是第一个顶层块, 2是它内部的块, 以此类推
     depth: isize,
+}
+
+impl<'a> Default for Local<'a> {
+    fn default() -> Self {
+        Self {
+            name: Default::default(),
+            depth: -1,
+        }
+    }
 }
 
 impl<'a> Default for Compiler<'a> {

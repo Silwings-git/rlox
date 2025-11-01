@@ -54,6 +54,7 @@ opcodes! {
     Less=0x14,
     // 弹出栈顶值并将其遗弃
     Pop=0x15,
+    // 弹出n个栈顶值并将其遗弃
     Popn=0x16,
     // 定义全局变量
     DefineGlobal=0x17,
@@ -61,6 +62,10 @@ opcodes! {
     GetGlobal=0x18,
     // 赋值全局变量
     SetGlobal=0x19,
+    // 获取局部变量
+    GetLocal=0x20,
+    // 赋值局部变量
+    SetLocal=0x21,
     Print=0x99
 }
 
@@ -244,6 +249,36 @@ impl Chunk {
                     None => {
                         println!(
                             "Failed to read OpSetGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
+            OpCode::GetLocal => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => {
+                        Some(Instruction::new(OpCode::GetLocal, Operand::U8(*operand), 2))
+                    }
+                    None => {
+                        println!(
+                            "Failed to read OpGetLocal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
+            OpCode::SetLocal => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => {
+                        Some(Instruction::new(OpCode::SetLocal, Operand::U8(*operand), 2))
+                    }
+                    None => {
+                        println!(
+                            "Failed to read OpSetLocal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
                             self.code.len()
                         );
                         None
