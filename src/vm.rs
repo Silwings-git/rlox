@@ -265,7 +265,7 @@ impl VM {
                 OpCode::DefineGlobal => {
                     let name = self.read_string(&instruction.operand).ok_or(
                         InterpretError::RuntimeError(
-                            "Failed to read global variable name from constants.".into(),
+                            "Bytecode error: The operand of the DefineGlobal directive does not correspond to the string in the constant pool".into(),
                         ),
                     )?;
                     self.globals.insert(
@@ -291,8 +291,9 @@ impl VM {
                             self.push(v.clone())?;
                         }
                         None => {
-                            return Err(self
-                                .runtime_error(&format!("Undefined variable {}", &name.as_str())));
+                            return Err(
+                                self.runtime_error(&format!("Undefined variable {}", &name.as_str()))
+                            );
                         }
                     }
                 }
