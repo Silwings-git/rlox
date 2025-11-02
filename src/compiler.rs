@@ -120,7 +120,7 @@ impl<'a> Parser<'a> {
         self.make_constant(Value::String(s))
     }
 
-    /// 声明局部变量
+    /// 声明局部变量(记录变量的存在)
     fn declare_variable(&mut self) {
         // 编译器只记录局部变量.因此如果在顶层全局作用域中就直接退出
         // 因为全局变量是后期绑定的, 所以编译器不会跟踪它所看到的关于全局变量的声明
@@ -687,10 +687,6 @@ impl<'a> ParseRule<'a> {
             TokenType::Number,
             Self::new(Some(Parser::number), None, Precedence::None),
         );
-        rules.insert(
-            TokenType::Number,
-            Self::new(Some(Parser::number), None, Precedence::None),
-        );
         rules.insert(TokenType::And, ParseRule::default());
         rules.insert(TokenType::Class, ParseRule::default());
         rules.insert(TokenType::Else, ParseRule::default());
@@ -1143,6 +1139,7 @@ pub struct Local<'a> {
     name: Token<'a>,
     // 声明局部变量的代码块的作用域深度.
     // 0是全局作用域, 1是第一个顶层块, 2是它内部的块, 以此类推
+    // -1表示未初始化
     depth: isize,
 }
 

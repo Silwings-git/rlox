@@ -291,9 +291,8 @@ impl VM {
                             self.push(v.clone())?;
                         }
                         None => {
-                            return Err(
-                                self.runtime_error(&format!("Undefined variable {}", &name))
-                            );
+                            return Err(self
+                                .runtime_error(&format!("Undefined variable {}", &name.as_str())));
                         }
                     }
                 }
