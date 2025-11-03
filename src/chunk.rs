@@ -66,6 +66,8 @@ opcodes! {
     GetLocal=0x20,
     // 赋值局部变量
     SetLocal=0x21,
+    // 如果为false则跳转
+    JumpIfFalse=0x22,
     Print=0x99
 }
 
@@ -76,6 +78,38 @@ pub enum Operand {
     None,
     // 1字节无符号整数
     U8(u8),
+    // 2字节无符号整数
+    U16(u16),
+}
+
+/// 通用 trait：表示类型可与字节相关类型（如 (u8, u8)）相互转换
+/// 关联类型 Target 定义转换目标（如 u16 ↔ (u8, u8)）
+pub trait ByteConvertible {
+    /// 转换的目标类型
+    type Target;
+
+    /// 转换为目标类型
+    fn to(&self) -> Self::Target;
+}
+
+// (u8, u8) → u16
+impl ByteConvertible for (u8, u8) {
+    type Target = u16;
+
+    fn to(&self) -> Self::Target {
+        (self.0 as u16) << 8 | (self.1 as u16)
+    }
+}
+
+// u16 → (u8, u8)
+impl ByteConvertible for u16 {
+    type Target = (u8, u8);
+
+    fn to(&self) -> Self::Target {
+        let high = (self >> 8) as u8 & u8::MAX;
+        let low = *self as u8 & u8::MAX;
+        (high, low)
+    }
 }
 
 impl Display for Operand {
@@ -83,6 +117,7 @@ impl Display for Operand {
         match self {
             Operand::None => write!(f, "-"),
             Operand::U8(v) => write!(f, "{v}"),
+            Operand::U16(v) => write!(f, "{v}"),
         }
     }
 }
@@ -140,14 +175,39 @@ impl Chunk {
         }
     }
 
+    fn replace_by_index(&mut self, index: usize, op: u8) {
+        self.code[index] = op;
+    }
+
     pub fn write_chunk_op_code(&mut self, op_code: OpCode, line: u32) {
         self.write_byte(op_code as u8, line);
+    }
+
+    pub fn write_chunk_placeholder(&mut self, line: u32) {
+        self.write_byte(0xFF, line);
+    }
+
+    pub fn replace_operand_by_index(&mut self, index: usize, operand: Operand) {
+        match operand {
+            Operand::None => {}
+            Operand::U8(u) => self.replace_by_index(index, u),
+            Operand::U16(u) => {
+                let (hight_byte, low_byte) = u.to();
+                self.replace_by_index(index, hight_byte);
+                self.replace_by_index(index + 1, low_byte);
+            }
+        }
     }
 
     pub fn write_chunk_operand(&mut self, operand: Operand, line: u32) {
         match operand {
             Operand::None => {}
             Operand::U8(u) => self.write_byte(u, line),
+            Operand::U16(u) => {
+                let (hight_byte, low_byte) = u.to();
+                self.write_byte(hight_byte, line);
+                self.write_byte(low_byte, line);
+            }
         }
     }
 
@@ -285,6 +345,27 @@ impl Chunk {
                     }
                 }
             }
+            OpCode::JumpIfFalse => {
+                if let (Some(&high_byte), Some(&low_byte)) =
+                    (self.code.get(offset + 1), self.code.get(offset + 2))
+                {
+                    // 组合成16位：高字节左移8位 + 低字节
+                    let operand = (high_byte, low_byte).to();
+                    Some(Instruction::new(
+                        OpCode::JumpIfFalse,
+                        Operand::U16(operand),
+                        3,
+                    ))
+                } else {
+                    println!(
+                        "Failed to read OpJumpIfFalse: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
+                        offset + 1,
+                        offset + 2,
+                        self.code.len()
+                    );
+                    None
+                }
+            }
         }
     }
 
@@ -298,6 +379,7 @@ impl Chunk {
         match operand {
             Operand::None => None,
             Operand::U8(index) => self.constants.get_value(*index as usize),
+            Operand::U16(index) => self.constants.get_value(*index as usize),
         }
     }
 

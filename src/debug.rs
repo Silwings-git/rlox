@@ -52,6 +52,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL"),
         OpCode::GetLocal => byte_instruction("OP_GET_LOCAL", &instruction),
         OpCode::SetLocal => byte_instruction("OP_SET_LOCAL", &instruction),
+        OpCode::JumpIfFalse => byte_instruction("OP_JUMP_IF_FALSE", &instruction),
     }
 
     offset + instruction.len
@@ -60,6 +61,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 fn byte_instruction(name: &str, instruction: &Instruction) {
     let slot = match instruction.operand {
         Operand::U8(slot) => slot as usize,
+        Operand::U16(slot) => slot as usize,
         Operand::None => 0,
     };
     println!("{name:<16} {slot:4}");

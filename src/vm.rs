@@ -291,9 +291,8 @@ impl VM {
                             self.push(v.clone())?;
                         }
                         None => {
-                            return Err(
-                                self.runtime_error(&format!("Undefined variable {}", &name.as_str()))
-                            );
+                            return Err(self
+                                .runtime_error(&format!("Undefined variable {}", &name.as_str())));
                         }
                     }
                 }
@@ -323,6 +322,9 @@ impl VM {
                                  InterpretError::RuntimeError(format!("GetLocal instruction: index {} is out of bounds for stack (length: {})",                     index, self.stack.len())))?;
                         self.push(v.clone())?;
                     }
+                    Operand::U16(_) => {
+                        return Err(self.runtime_error("Invalid operand."));
+                    }
                     Operand::None => {
                         return Err(self.runtime_error("The instruction requires an index operand, but no operand was provided."));
                     }
@@ -332,8 +334,24 @@ impl VM {
                         let v = self.peek(0).cloned().unwrap_or(Value::Nil);
                         self.stack.set_by_index(index.into(), v);
                     }
+                    Operand::U16(_) => {
+                        return Err(self.runtime_error("Invalid operand."));
+                    }
                     Operand::None => {
                         return Err(self.runtime_error("The instruction requires an index operand, but no operand was provided."));
+                    }
+                },
+                OpCode::JumpIfFalse => match instruction.operand {
+                    Operand::None => return Err(self.runtime_error("Illegal operand for JumpIfFalse: Operand::None is not supported (expected U16 offset)")),
+                    Operand::U8(u) => return Err(self.runtime_error(&format!("Illegal operand type for JumpIfFalse: U8 is not allowed (requires U16 offset, current value: {u:?})"))),
+                    Operand::U16(offset) => {
+                        if self
+                            .peek(0)
+                            .filter(|&v| matches!(v,Value::Bool(b) if *b))
+                            .is_none()
+                        {
+                            self.ip += offset as usize;
+                        }
                     }
                 },
             }

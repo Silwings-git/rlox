@@ -193,6 +193,8 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) {
         if self.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.match_token(TokenType::If) {
+            self.if_statement();
         } else if self.match_token(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
@@ -200,6 +202,39 @@ impl<'a> Parser<'a> {
         } else {
             self.expression_statement();
         }
+    }
+
+    /// 解析if语句
+    fn if_statement(&mut self) {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'if'.");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expect ')' after condition.");
+
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.statement();
+        self.patch_jump(then_jump);
+    }
+
+    fn patch_jump(&mut self, offset: usize) {
+        // 用`current_chunk().code_len()`拿到"跳转目标的位置"(then分支之后的指令)
+        // 用`offset+2`拿到"跳转指令的下一条指令的位置"
+        // 两者的差值就是"ip需要跳过的字节数",也就是最终要回填的偏移量
+        let jump = self.current_chunk().code_len() - offset - 2;
+
+        if jump > u16::MAX as usize {
+            self.error_at_current("Too much code to jump over.");
+        }
+
+        self.current_chunk()
+            .replace_operand_by_index(offset, Operand::U16(jump as u16));
+    }
+
+    fn emit_jump(&mut self, op: OpCode) -> usize {
+        self.emit_op_code(op);
+        self.emit_placeholder();
+        self.emit_placeholder();
+
+        self.current_chunk().code_len() - 2
     }
 
     fn begin_scope(&mut self) {
@@ -249,13 +284,14 @@ impl<'a> Parser<'a> {
         self.current.token_type == token_type
     }
 
-    /// 解析语句
+    /// 解析打印语句
     fn print_statement(&mut self) {
         self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after value.");
         self.emit_op_code(OpCode::Print);
     }
 
+    /// 解析表达式
     fn expression(&mut self) {
         // 解析最低优先级及更高优先级的表达式
         self.parse_precedence(Precedence::Assignment);
@@ -291,6 +327,11 @@ impl<'a> Parser<'a> {
     fn emit_op_code(&mut self, op_code: OpCode) {
         let line = self.previous.line;
         self.current_chunk().write_chunk_op_code(op_code, line);
+    }
+
+    fn emit_placeholder(&mut self) {
+        let line = self.previous.line;
+        self.current_chunk().write_chunk_placeholder(line);
     }
 
     fn emit_op_codes(&mut self, op_code_a: OpCode, op_code_b: OpCode) {
