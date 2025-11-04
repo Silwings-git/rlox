@@ -354,6 +354,13 @@ impl VM {
                         }
                     }
                 },
+                OpCode::Jump=>{
+                    match instruction.operand {
+                        Operand::None => return Err(self.runtime_error("Illegal operand for Jump: Operand::None is not supported (expected U16 offset)")),
+                        Operand::U8(u) => return Err(self.runtime_error(&format!("Illegal operand type for Jump: U8 is not allowed (requires U16 offset, current value: {u:?})"))),
+                        Operand::U16(offset) => self.ip += offset as usize,
+                    }
+                }
             }
         }
     }

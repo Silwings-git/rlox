@@ -52,10 +52,25 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL"),
         OpCode::GetLocal => byte_instruction("OP_GET_LOCAL", &instruction),
         OpCode::SetLocal => byte_instruction("OP_SET_LOCAL", &instruction),
-        OpCode::JumpIfFalse => byte_instruction("OP_JUMP_IF_FALSE", &instruction),
+        OpCode::JumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", &instruction, offset),
+        OpCode::Jump => jump_instruction("OP_JUMP", &instruction, offset),
     }
 
     offset + instruction.len
+}
+
+fn jump_instruction(name: &str, instruction: &Instruction, offset: usize) {
+    println!(
+        "{:<16} {:4} -> {}",
+        name,
+        offset,
+        offset
+            + match instruction.operand {
+                Operand::None => 0,
+                Operand::U8(u) => u as usize,
+                Operand::U16(u) => u as usize,
+            }
+    )
 }
 
 fn byte_instruction(name: &str, instruction: &Instruction) {

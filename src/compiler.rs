@@ -211,8 +211,15 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
 
         let then_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_op_code(OpCode::Pop);
         self.statement();
+        let else_jump = self.emit_jump(OpCode::Jump);
         self.patch_jump(then_jump);
+        self.emit_op_code(OpCode::Pop);
+        if self.match_token(TokenType::Else) {
+            self.statement();
+        }
+        self.patch_jump(else_jump);
     }
 
     fn patch_jump(&mut self, offset: usize) {

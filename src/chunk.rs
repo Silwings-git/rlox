@@ -66,8 +66,10 @@ opcodes! {
     GetLocal=0x20,
     // 赋值局部变量
     SetLocal=0x21,
-    // 如果为false则跳转
+    // 如果为false则跳转(16位操作数)
     JumpIfFalse=0x22,
+    // 跳转(16位操作数)
+    Jump=0x23,
     Print=0x99
 }
 
@@ -345,18 +347,13 @@ impl Chunk {
                     }
                 }
             }
-            OpCode::JumpIfFalse => {
-                if let (Some(&high_byte), Some(&low_byte)) =
-                    (self.code.get(offset + 1), self.code.get(offset + 2))
-                {
-                    // 组合成16位：高字节左移8位 + 低字节
-                    let operand = (high_byte, low_byte).to();
-                    Some(Instruction::new(
-                        OpCode::JumpIfFalse,
-                        Operand::U16(operand),
-                        3,
-                    ))
-                } else {
+            OpCode::JumpIfFalse => match self.read_u16_operand(offset) {
+                Some(operand) => Some(Instruction::new(
+                    OpCode::JumpIfFalse,
+                    Operand::U16(operand),
+                    3,
+                )),
+                None => {
                     println!(
                         "Failed to read OpJumpIfFalse: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
                         offset + 1,
@@ -365,7 +362,30 @@ impl Chunk {
                     );
                     None
                 }
-            }
+            },
+            OpCode::Jump => match self.read_u16_operand(offset) {
+                Some(operand) => Some(Instruction::new(OpCode::Jump, Operand::U16(operand), 3)),
+                None => {
+                    println!(
+                        "Failed to read OpJump: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
+                        offset + 1,
+                        offset + 2,
+                        self.code.len()
+                    );
+                    None
+                }
+            },
+        }
+    }
+
+    /// 读取双字节操作数（high_byte + low_byte）
+    fn read_u16_operand(&self, offset: usize) -> Option<u16> {
+        if let (Some(&high_byte), Some(&low_byte)) =
+            (self.code.get(offset + 1), self.code.get(offset + 2))
+        {
+            Some((high_byte, low_byte).to())
+        } else {
+            None
         }
     }
 
