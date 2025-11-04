@@ -569,6 +569,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn and(&mut self, _can_assign: bool) {
+        let end_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_op_code(OpCode::Pop);
+        self.parse_precedence(Precedence::And);
+        self.patch_jump(end_jump);
+    }
+
+    fn or(&mut self, _can_assign: bool) {
+        let else_jump = self.emit_jump(OpCode::JumpIfFalse);
+        let end_jump = self.emit_jump(OpCode::Jump);
+
+        self.patch_jump(else_jump);
+        self.emit_op_code(OpCode::Pop);
+
+        self.parse_precedence(Precedence::Or);
+        self.patch_jump(end_jump);
+    }
+
     fn get_rule(&self, operator_type: &TokenType) -> Option<&ParseRule<'a>> {
         self.rules.get(operator_type)
     }
@@ -735,7 +753,10 @@ impl<'a> ParseRule<'a> {
             TokenType::Number,
             Self::new(Some(Parser::number), None, Precedence::None),
         );
-        rules.insert(TokenType::And, ParseRule::default());
+        rules.insert(
+            TokenType::And,
+            Self::new(None, Some(Parser::and), Precedence::And),
+        );
         rules.insert(TokenType::Class, ParseRule::default());
         rules.insert(TokenType::Else, ParseRule::default());
         rules.insert(
@@ -749,7 +770,10 @@ impl<'a> ParseRule<'a> {
             TokenType::Nil,
             Self::new(Some(Parser::literal), None, Precedence::None),
         );
-        rules.insert(TokenType::Or, ParseRule::default());
+        rules.insert(
+            TokenType::Or,
+            Self::new(None, Some(Parser::or), Precedence::Or),
+        );
         rules.insert(TokenType::Print, ParseRule::default());
         rules.insert(TokenType::Return, ParseRule::default());
         rules.insert(TokenType::Super, ParseRule::default());
