@@ -195,6 +195,8 @@ impl<'a> Parser<'a> {
             self.print_statement();
         } else if self.match_token(TokenType::If) {
             self.if_statement();
+        } else if self.match_token(TokenType::While) {
+            self.while_statement();
         } else if self.match_token(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
@@ -202,6 +204,34 @@ impl<'a> Parser<'a> {
         } else {
             self.expression_statement();
         }
+    }
+
+    /// 解析while循环
+    fn while_statement(&mut self) {
+        let loop_start = self.current_chunk().code_len();
+
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expect ')' after 'while'.");
+
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_op_code(OpCode::Pop);
+        self.statement();
+        self.emit_loop(loop_start);
+        self.patch_jump(exit_jump);
+        self.emit_op_code(OpCode::Pop);
+    }
+
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_op_code(OpCode::Loop);
+
+        let offset = self.current_chunk().code_len() - loop_start + 2;
+
+        if offset > u16::MAX as usize {
+            self.error_at_current("Loop body to large.");
+        }
+
+        self.emit_operand(Operand::U16(offset as u16));
     }
 
     /// 解析if语句

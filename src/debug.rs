@@ -12,7 +12,7 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     }
 }
 
-pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
+pub fn disassemble_instruction(chunk: &Chunk, mut offset: usize) -> usize {
     print!("{offset:04} ");
 
     if offset > 0 && chunk.get_line(offset) == chunk.get_line(offset - 1) {
@@ -28,6 +28,8 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
             return offset + 1;
         }
     };
+
+    offset += instruction.len;
 
     match instruction.op {
         OpCode::Return => simple_instruction("OP_RETURN"),
@@ -52,25 +54,29 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::SetGlobal => simple_instruction("OP_SET_GLOBAL"),
         OpCode::GetLocal => byte_instruction("OP_GET_LOCAL", &instruction),
         OpCode::SetLocal => byte_instruction("OP_SET_LOCAL", &instruction),
-        OpCode::JumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", &instruction, offset),
-        OpCode::Jump => jump_instruction("OP_JUMP", &instruction, offset),
+        OpCode::JumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", &instruction, offset, true),
+        OpCode::Jump => jump_instruction("OP_JUMP", &instruction, offset, true),
+        OpCode::Loop => jump_instruction("OP_LOOP", &instruction, offset, false),
     }
 
-    offset + instruction.len
+    offset
 }
 
-fn jump_instruction(name: &str, instruction: &Instruction, offset: usize) {
-    println!(
-        "{:<16} {:4} -> {}",
-        name,
-        offset,
-        offset
-            + match instruction.operand {
-                Operand::None => 0,
-                Operand::U8(u) => u as usize,
-                Operand::U16(u) => u as usize,
-            }
-    )
+fn jump_instruction(name: &str, instruction: &Instruction, offset: usize, add: bool) {
+    let operand = match instruction.operand {
+        Operand::None => 0,
+        Operand::U8(u) => u as usize,
+        Operand::U16(u) => u as usize,
+    };
+
+    let target = if add {
+        offset + operand
+    } else {
+        offset - operand
+    };
+
+    // 输出时起跳位置使用当前操作码的位置,所以需要`-instruction.len`
+    println!("{:<16} {:4} -> {}", name, offset - instruction.len, target)
 }
 
 fn byte_instruction(name: &str, instruction: &Instruction) {

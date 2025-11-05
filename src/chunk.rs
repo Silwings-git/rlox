@@ -70,6 +70,8 @@ opcodes! {
     JumpIfFalse=0x22,
     // 跳转(16位操作数)
     Jump=0x23,
+    // loop向前跳转
+    Loop=0x24,
     Print=0x99
 }
 
@@ -368,6 +370,18 @@ impl Chunk {
                 None => {
                     println!(
                         "Failed to read OpJump: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
+                        offset + 1,
+                        offset + 2,
+                        self.code.len()
+                    );
+                    None
+                }
+            },
+            OpCode::Loop => match self.read_u16_operand(offset) {
+                Some(operand) => Some(Instruction::new(OpCode::Loop, Operand::U16(operand), 3)),
+                None => {
+                    println!(
+                        "Failed to read OpLoop: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
                         offset + 1,
                         offset + 2,
                         self.code.len()
