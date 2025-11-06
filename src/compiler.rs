@@ -193,6 +193,8 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) {
         if self.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.match_token(TokenType::For) {
+            self.for_statement();
         } else if self.match_token(TokenType::If) {
             self.if_statement();
         } else if self.match_token(TokenType::While) {
@@ -204,6 +206,53 @@ impl<'a> Parser<'a> {
         } else {
             self.expression_statement();
         }
+    }
+
+    /// 解析for循环
+    fn for_statement(&mut self) {
+        // (
+        self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
+
+        // var a=0
+        self.declaration();
+
+        // ;
+        // self.consume(TokenType::Semicolon, "Expect ';'");
+
+        let loop_start = self.current_chunk().code_len();
+
+        // a <= 10
+        self.expression();
+
+        let expression_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        self.emit_op_code(OpCode::Pop);
+
+        let expression_true_jump = self.emit_jump(OpCode::Jump);
+
+        // ;
+        self.consume(TokenType::Semicolon, "Expect ';'");
+
+        let incremental_jump = self.current_chunk().code_len();
+
+        // a=a+1
+        self.statement();
+
+        self.emit_loop(loop_start);
+
+        // )
+        self.consume(TokenType::RightParen, "Expect ')' after 'for'.");
+
+        self.patch_jump(expression_true_jump);
+
+        // {...循环体}
+        self.statement();
+
+        self.emit_loop(incremental_jump);
+
+        self.patch_jump(expression_false_jump);
+
+        self.emit_op_code(OpCode::Pop);
     }
 
     /// 解析while循环
