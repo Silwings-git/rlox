@@ -214,20 +214,29 @@ impl<'a> Parser<'a> {
         self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
 
         // var a=0
-        self.declaration();
+        if !self.check(TokenType::Semicolon) {
+            self.declaration();
+        } else {
+            self.consume(TokenType::Semicolon, "Expect ';'");
+        }
 
         // ;
         // self.consume(TokenType::Semicolon, "Expect ';'");
 
         let loop_start = self.current_chunk().code_len();
 
+        let mut expression_false_jump = None;
         // a <= 10
-        self.expression();
+        if !self.check(TokenType::Semicolon) {
+            self.expression();
 
-        let expression_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+            // 条件表达式为false时跳转到for语句下一个token
+            expression_false_jump = Some(self.emit_jump(OpCode::JumpIfFalse));
 
-        self.emit_op_code(OpCode::Pop);
+            self.emit_op_code(OpCode::Pop);
+        }
 
+        // 条件表达式为true时跳转到循环体
         let expression_true_jump = self.emit_jump(OpCode::Jump);
 
         // ;
@@ -236,7 +245,10 @@ impl<'a> Parser<'a> {
         let incremental_jump = self.current_chunk().code_len();
 
         // a=a+1
-        self.statement();
+        if !self.check(TokenType::RightParen) {
+            self.expression();
+            self.emit_op_code(OpCode::Pop);
+        }
 
         self.emit_loop(loop_start);
 
@@ -250,7 +262,9 @@ impl<'a> Parser<'a> {
 
         self.emit_loop(incremental_jump);
 
-        self.patch_jump(expression_false_jump);
+        if let Some(j) = expression_false_jump {
+            self.patch_jump(j);
+        }
 
         self.emit_op_code(OpCode::Pop);
     }

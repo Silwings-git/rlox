@@ -207,6 +207,16 @@ impl VM {
                             // 动态字符串不驻留
                             self.push(s1 + s2)?
                         }
+                         (Some(Value::String(n2)), Some(v1)) => {
+                            self.pop().unwrap();
+                            self.pop().unwrap();
+                            self.push(InternedString::new(v1.to_string().into()) + n2)?
+                        }
+                        (Some(v2), Some(Value::String(s1)) )=> {
+                            self.pop().unwrap();
+                            self.pop().unwrap();
+                            self.push(s1 + InternedString::new(v2.to_string().into()) )?
+                        }
                         (Some(Value::Number(n2)), Some(Value::Number(n1))) => {
                             self.pop().unwrap();
                             self.pop().unwrap();
@@ -214,9 +224,9 @@ impl VM {
                         }
                         _ => {
                             return Err(
-                                self.runtime_error("Operands must be two numbers or two strings.")
-                            );
-                        }
+                                        self.runtime_error("Operands must be two numbers, or at least one string.")
+                                    );
+                            }
                     }
                 }
                 OpCode::Subtract => binary_op!(self,Value::Number,-),
