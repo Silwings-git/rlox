@@ -210,63 +210,55 @@ impl<'a> Parser<'a> {
 
     /// 解析for循环
     fn for_statement(&mut self) {
-        // (
+        self.begin_scope();
         self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
 
-        // var a=0
-        if !self.check(TokenType::Semicolon) {
-            self.declaration();
+        if self.match_token(TokenType::Semicolon) {
+            // 没有初始化器
+        } else if self.match_token(TokenType::Var) {
+            self.var_declaration();
         } else {
-            self.consume(TokenType::Semicolon, "Expect ';'");
+            self.expression_statement();
         }
 
-        // ;
-        // self.consume(TokenType::Semicolon, "Expect ';'");
+        let mut loop_start = self.current_chunk().code_len();
 
-        let loop_start = self.current_chunk().code_len();
-
-        let mut expression_false_jump = None;
-        // a <= 10
-        if !self.check(TokenType::Semicolon) {
+        let mut exit_jump = None;
+        if !self.match_token(TokenType::Semicolon) {
+            // 条件子句
             self.expression();
+            self.consume(TokenType::Semicolon, "Expect ';'.");
 
-            // 条件表达式为false时跳转到for语句下一个token
-            expression_false_jump = Some(self.emit_jump(OpCode::JumpIfFalse));
-
+            exit_jump = Some(self.emit_jump(OpCode::JumpIfFalse));
             self.emit_op_code(OpCode::Pop);
         }
 
-        // 条件表达式为true时跳转到循环体
-        let expression_true_jump = self.emit_jump(OpCode::Jump);
-
-        // ;
-        self.consume(TokenType::Semicolon, "Expect ';'");
-
-        let incremental_jump = self.current_chunk().code_len();
-
-        // a=a+1
-        if !self.check(TokenType::RightParen) {
+        if !self.match_token(TokenType::RightParen) {
+            // 跳过增量语句
+            let body_jump = self.emit_jump(OpCode::Jump);
+            let increment_start = self.current_chunk().code_len();
             self.expression();
             self.emit_op_code(OpCode::Pop);
+
+            self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
+
+            self.emit_loop(loop_start);
+            // 修改为指向增量表达式开始处的偏移量
+            loop_start = increment_start;
+            self.patch_jump(body_jump);
         }
+
+        self.statement();
 
         self.emit_loop(loop_start);
 
-        // )
-        self.consume(TokenType::RightParen, "Expect ')' after 'for'.");
-
-        self.patch_jump(expression_true_jump);
-
-        // {...循环体}
-        self.statement();
-
-        self.emit_loop(incremental_jump);
-
-        if let Some(j) = expression_false_jump {
-            self.patch_jump(j);
+        if let Some(exit_jump) = exit_jump {
+            self.patch_jump(exit_jump);
+            // 弹出条件
+            self.emit_op_code(OpCode::Pop);
         }
 
-        self.emit_op_code(OpCode::Pop);
+        self.end_scope();
     }
 
     /// 解析while循环
