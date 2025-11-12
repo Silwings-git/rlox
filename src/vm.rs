@@ -4,6 +4,7 @@ use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
 use crate::config::VMConfig;
+use crate::object::Function;
 use crate::string_pool::{InternedString, StringPool};
 use crate::value::{Value, print_value};
 
@@ -22,24 +23,39 @@ macro_rules! binary_op {
 type Table = HashMap<InternedString, Value>;
 
 pub struct VM {
-    chunk: Chunk,
-    // 始终指向即将执行的指令
-    ip: usize,
+    // 调用栈
+    frames: CallStack,
+    // 当前CallFrame栈的高度(正在进行函数调用的数量)
+    frame_count: usize,
     stack: Stack,
     globals: Table,
     strings: StringPool,
 }
 
+struct CallStack {
+    inner: Vec<CallFrame>,
+    max_depth: usize,
+}
+
+impl CallStack {
+    fn new(max_depth: usize) -> Self {
+        CallStack {
+            inner: vec![],
+            max_depth,
+        }
+    }
+}
+
 struct Stack {
     inner: Vec<Value>,
-    max_stack_depth: usize,
+    max_depth: usize,
 }
 
 impl Stack {
     fn new(max_depth: usize) -> Self {
         Self {
             inner: vec![],
-            max_stack_depth: max_depth,
+            max_depth,
         }
     }
 
@@ -74,10 +90,10 @@ impl Stack {
     }
 
     fn push<T: Into<Value>>(&mut self, v: T) -> Result<(), InterpretError> {
-        if self.inner.len() > self.max_stack_depth {
+        if self.inner.len() > self.max_depth {
             return Err(InterpretError::RuntimeError(format!(
                 "StackOverflow: max depth {} exceeded",
-                self.max_stack_depth
+                self.max_depth
             )));
         }
         self.inner.push(v.into());
@@ -112,6 +128,16 @@ pub enum InterpretError {
     RuntimeError(String),
 }
 
+/// 代表正在进行的函数调用
+struct CallFrame {
+    // 被调用函数
+    function: Function,
+    // 当前函数执行到的ip
+    ip: usize,
+    // 指向虚拟机的值栈中该函数使用的第一个槽
+    slot: usize,
+}
+
 impl VM {
     pub fn new(config: VMConfig) -> Self {
         VM {
@@ -140,6 +166,8 @@ impl VM {
 
     fn reset_stack(&mut self) {
         self.stack.reset_stack();
+        self.frame_count = 0;
+        // todo 是否需要把call frame也重置?
     }
 
     fn intern_interned(&mut self, s: &InternedString) -> InternedString {
@@ -147,9 +175,7 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
-        let mut chunk = Chunk::new();
-
-        let mut parser = Parser::new(source, &mut chunk);
+        let mut parser = Parser::new(source);
         if !parser.compile() {
             return Err(InterpretError::CompileError);
         }

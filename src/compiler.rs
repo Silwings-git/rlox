@@ -1,6 +1,7 @@
 use std::{
     array,
     collections::HashMap,
+    f32::consts::E,
     iter::Peekable,
     mem,
     str::{CharIndices, FromStr},
@@ -8,6 +9,7 @@ use std::{
 
 use crate::{
     chunk::{Chunk, OpCode, Operand},
+    object::{Function, FunctionType},
     string_pool::{InternedString, StringPool},
     value::Value,
 };
@@ -21,24 +23,22 @@ pub struct Parser<'a> {
     had_error: bool,
     // 恐慌模式,避免级联错误
     panic_mode: bool,
-    compiling_chunk: &'a mut Chunk,
     rules: HashMap<TokenType, ParseRule<'a>>,
     strings: StringPool,
     compiler: Compiler<'a>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(source: &'a str, chunk: &'a mut Chunk) -> Self {
+    pub fn new(source: &'a str) -> Self {
         Parser {
             scanner: Scanner::init_scanner(source),
             previous: Default::default(),
             current: Default::default(),
             had_error: false,
             panic_mode: false,
-            compiling_chunk: chunk,
             rules: ParseRule::init_rules(),
             strings: StringPool::default(),
-            compiler: Compiler::new(),
+            compiler: Compiler::new(FunctionType::Script),
         }
     }
 
@@ -46,13 +46,15 @@ impl<'a> Parser<'a> {
         self.strings.intern(s)
     }
 
-    pub fn compile(&mut self) -> bool {
+    pub fn compile(mut self) -> Option<Function> {
         self.advance();
         while !self.match_token(TokenType::Eof) {
             self.declaration();
         }
+
         self.end_compiler();
-        !self.had_error
+
+        (!self.had_error).then(|| self.compiler.function)
     }
 
     /// 解析声明
@@ -442,7 +444,7 @@ impl<'a> Parser<'a> {
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {
-        self.compiling_chunk
+        &mut self.compiler.function.chunk
     }
 
     fn error_at_previous(&mut self, message: &str) {
@@ -482,7 +484,16 @@ impl<'a> Parser<'a> {
         {
             if !self.had_error {
                 use crate::debug::disassemble_chunk;
-                disassemble_chunk(self.current_chunk(), "code");
+                let func_name = self
+                    .compiler
+                    .function
+                    .name
+                    .as_str()
+                    .is_empty()
+                    .then_some("<script>")
+                    .unwrap_or(self.compiler.function.name.as_str())
+                    .to_string();
+                disassemble_chunk(self.current_chunk(), &func_name);
             }
         }
     }
@@ -1289,6 +1300,8 @@ pub struct Compiler<'a> {
     local_count: usize,
     // 作用域深度: 正在编译的当前代码外围的代码块数量
     scope_depth: isize,
+    function: Function,
+    function_type: FunctionType,
 }
 
 pub struct Local<'a> {
@@ -1309,18 +1322,24 @@ impl<'a> Default for Local<'a> {
     }
 }
 
-impl<'a> Default for Compiler<'a> {
-    fn default() -> Self {
-        Self {
+impl<'a> Compiler<'a> {
+    fn new(function_type: FunctionType) -> Self {
+        let mut compiler = Self {
             locals: array::from_fn(|_i| Local::default()),
             local_count: Default::default(),
             scope_depth: Default::default(),
-        }
-    }
-}
+            function: Default::default(),
+            function_type,
+        };
 
-impl<'a> Compiler<'a> {
-    fn new() -> Self {
-        Default::default()
+        compiler.local_count += 1;
+        let local = &mut compiler.locals[compiler.local_count];
+        local.depth = 0;
+        local.name = Token {
+            token_type: TokenType::Identifier,
+            lexeme: "",
+            line: 0,
+        };
+        compiler
     }
 }

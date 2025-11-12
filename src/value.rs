@@ -1,6 +1,9 @@
-use std::{fmt::Display, slice::Iter};
+use std::{
+    fmt::{Display, write},
+    slice::Iter,
+};
 
-use crate::{string_pool::InternedString, vm::InterpretError};
+use crate::{object::Function, string_pool::InternedString, vm::InterpretError};
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -8,6 +11,7 @@ pub enum Value {
     Nil,
     Number(f64),
     String(InternedString),
+    Function(Function),
 }
 
 impl PartialEq for Value {
@@ -53,6 +57,15 @@ impl Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::Number(n) => write!(f, "{n}"),
             Value::String(str) => write!(f, "{str}"),
+            Value::Function(function) => {
+                let func_name = function
+                    .name
+                    .as_str()
+                    .is_empty()
+                    .then_some("<script>")
+                    .unwrap_or(function.name.as_str());
+                write!(f, "<fn {}>", func_name)
+            }
         }
     }
 }
@@ -78,7 +91,7 @@ impl Value {
 }
 
 /// 常量池
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ValueArray {
     values: Vec<Value>,
 }

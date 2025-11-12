@@ -142,7 +142,7 @@ impl Instruction {
 }
 
 /// 指令动态数组
-#[derive(Debug, Default)]
+#[derive(Debug, Default,Clone)]
 pub struct Chunk {
     code: Vec<u8>,
     constants: ValueArray,
