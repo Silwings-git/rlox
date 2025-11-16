@@ -25,8 +25,6 @@ type Table = HashMap<InternedString, Value>;
 pub struct VM {
     // 调用栈
     frames: CallStack,
-    // 当前CallFrame栈的高度(正在进行函数调用的数量)
-    frame_count: usize,
     stack: Stack,
     globals: Table,
     strings: StringPool,
@@ -35,6 +33,8 @@ pub struct VM {
 struct CallStack {
     inner: Vec<CallFrame>,
     max_depth: usize,
+    // 当前CallFrame栈的高度(正在进行函数调用的数量)
+    frame_count: usize,
 }
 
 impl CallStack {
@@ -42,7 +42,17 @@ impl CallStack {
         CallStack {
             inner: vec![],
             max_depth,
+            frame_count: 0,
         }
+    }
+
+    fn current_frame(&mut self) -> &mut CallFrame {
+        self.inner.last_mut().unwrap()
+    }
+
+    fn reset(&mut self) {
+        // todo 是否需要把call frame也重置?
+        self.frame_count = 0;
     }
 }
 
@@ -137,12 +147,43 @@ struct CallFrame {
     // 指向虚拟机的值栈中该函数使用的第一个槽
     slot: usize,
 }
+impl CallFrame {
+    pub fn new(function: Function) -> Self {
+        Self {
+            function,
+            ip: 0,
+            slot: 0,
+        }
+    }
+
+    fn read_byte(&mut self) -> Result<Instruction, InterpretError> {
+        let instruction = self
+            .function
+            .chunk
+            .read_opcode(self.ip)
+            .ok_or(InterpretError::RuntimeError("No next opcode".to_string()))?;
+        self.ip += instruction.len;
+        Ok(instruction)
+    }
+
+    fn read_string(&self, operand: &Operand) -> Option<&Value> {
+        self.function.chunk.read_constant(operand)
+    }
+
+    fn read_constant(&self, operand: &Operand) -> Result<&Value, InterpretError> {
+        self.function
+            .chunk
+            .read_constant(operand)
+            .ok_or(InterpretError::RuntimeError(
+                "Cannot find the constant".to_string(),
+            ))
+    }
+}
 
 impl VM {
     pub fn new(config: VMConfig) -> Self {
         VM {
-            chunk: Chunk::new(),
-            ip: 0,
+            frames: CallStack::new(config.max_frames_depth),
             stack: Stack::new(config.max_stack_depth),
             globals: HashMap::new(),
             strings: Default::default(),
@@ -166,8 +207,7 @@ impl VM {
 
     fn reset_stack(&mut self) {
         self.stack.reset_stack();
-        self.frame_count = 0;
-        // todo 是否需要把call frame也重置?
+        self.frames.reset();
     }
 
     fn intern_interned(&mut self, s: &InternedString) -> InternedString {
@@ -175,45 +215,48 @@ impl VM {
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
-        let mut parser = Parser::new(source);
-        if !parser.compile() {
-            return Err(InterpretError::CompileError);
+        let parser = Parser::new(source);
+
+        if let Some(func) = parser.compile() {
+            self.intern_chunk_constants(&func.chunk);
+            self.frames.inner.push(CallFrame::new(func));
+            return self.run();
         }
 
-        self.interpret_chunk(chunk)
+        return Err(InterpretError::CompileError);
     }
 
-    pub fn interpret_chunk(&mut self, chunk: Chunk) -> Result<(), InterpretError> {
-        self.intern_chunk_constants(&chunk);
-        self.chunk = chunk;
-        self.ip = 0;
-        self.run()
+    fn print_stack(&self) {
+        {
+            print!("          ");
+            if !self.stack.is_empty() {
+                for v in self.stack.inner.iter().rev() {
+                    print!("[ ");
+                    print_value(v);
+                    print!(" ]");
+                }
+            }
+            println!();
+        }
     }
 
     fn run(&mut self) -> Result<(), InterpretError> {
         loop {
-            #[cfg(feature = "debug_trace_execution")]
+            #[cfg(feature = "debug")]
             {
+                self.print_stack();
+                let frame = self.current_frame();
                 use crate::debug::disassemble_instruction;
-                print!("          ");
-                if !self.stack.is_empty() {
-                    for v in self.stack.inner.iter().rev() {
-                        print!("[ ");
-                        print_value(v);
-                        print!(" ]");
-                    }
-                }
-                println!();
-                disassemble_instruction(&self.chunk, self.ip);
+                disassemble_instruction(&frame.function.chunk, frame.ip);
             }
-            let instruction = self.read_byte()?;
+            let instruction = self.current_frame().read_byte()?;
             match instruction.op {
                 OpCode::Return => {
                     return Ok(());
                 }
                 OpCode::Constant => {
-                    let constant = self.read_constant(&instruction.operand)?;
-                    self.push(constant.clone())?
+                    let constant = self.current_frame().read_constant(&instruction.operand)?.clone();
+                    self.push(constant)?
                 }
                 OpCode::Negate => {
                     let number = self
@@ -266,8 +309,7 @@ impl VM {
                     let pop = match self.pop().unwrap() {
                         Value::Bool(b) => b,
                         Value::Nil => false,
-                        Value::Number(_) => true,
-                        Value::String(_) => true,
+                        _=>true,
                     };
                     self.push(!pop)?;
                 }
@@ -299,13 +341,15 @@ impl VM {
                     }
                 }
                 OpCode::DefineGlobal => {
-                    let name = self.read_string(&instruction.operand).ok_or(
+                    let name = self.current_frame().read_string(&instruction.operand).ok_or(
                         InterpretError::RuntimeError(
                             "Bytecode error: The operand of the DefineGlobal directive does not correspond to the string in the constant pool".into(),
                         ),
-                    )?;
+                    )?
+                    .as_string()?
+                    .to_owned();
                     self.globals.insert(
-                        name.as_string()?.to_owned(),
+                        name,
                         // 允许全局变量声明为nil
                         self.peek(0).cloned().unwrap_or(Value::Nil),
                     );
@@ -314,14 +358,15 @@ impl VM {
                     ))?;
                 }
                 OpCode::GetGlobal => {
-                    let name = self
+                    let name = self.current_frame()
                         .read_string(&instruction.operand)
                         .ok_or(InterpretError::RuntimeError(
                             "Failed to read global variable name from constants.".into(),
                         ))?
-                        .as_string()?;
+                        .as_string()?
+                        .to_owned();
 
-                    let value = self.globals.get(name);
+                    let value = self.globals.get(&name);
                     match value {
                         Some(v) => {
                             self.push(v.clone())?;
@@ -333,13 +378,13 @@ impl VM {
                     }
                 }
                 OpCode::SetGlobal => {
-                    let name = self.read_string(&instruction.operand).ok_or(
+                    let name = self.current_frame().read_string(&instruction.operand).ok_or(
                         InterpretError::RuntimeError(
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
-                    let name = name.as_string()?;
-                    if self.globals.contains_key(name) {
+                    let name = name.as_string()?.to_owned();
+                    if self.globals.contains_key(&name) {
                         self.globals
                             .insert(name.to_owned(), self.peek(0).cloned().unwrap_or(Value::Nil));
                     } else {
@@ -351,11 +396,12 @@ impl VM {
                 }
                 OpCode::GetLocal => match instruction.operand {
                     Operand::U8(index) => {
+                        let slot = self.current_frame().slot;
                         let v = self
                             .stack
-                            .get_by_index(index as usize)
+                            .get_by_index(slot + index as usize)
                             .ok_or_else(||
-                                 InterpretError::RuntimeError(format!("GetLocal instruction: index {} is out of bounds for stack (length: {})",                     index, self.stack.len())))?;
+                                 InterpretError::RuntimeError(format!("GetLocal instruction: index {} is out of bounds for stack (length: {})", index, self.stack.len())))?;
                         self.push(v.clone())?;
                     }
                     Operand::U16(_) => {
@@ -367,8 +413,9 @@ impl VM {
                 },
                 OpCode::SetLocal => match instruction.operand {
                     Operand::U8(index) => {
+                        let slot = self.current_frame().slot;
                         let v = self.peek(0).cloned().unwrap_or(Value::Nil);
-                        self.stack.set_by_index(index.into(), v);
+                        self.stack.set_by_index(slot + index as usize, v);
                     }
                     Operand::U16(_) => {
                         return Err(self.runtime_error("Invalid operand."));
@@ -386,7 +433,7 @@ impl VM {
                             .filter(|&v| matches!(v,Value::Bool(b) if *b))
                             .is_none()
                         {
-                            self.ip += offset as usize;
+                            self.current_frame().ip += offset as usize;
                         }
                     }
                 },
@@ -394,45 +441,29 @@ impl VM {
                     match instruction.operand {
                         Operand::None => return Err(self.runtime_error("Illegal operand for Jump: Operand::None is not supported (expected U16 offset)")),
                         Operand::U8(u) => return Err(self.runtime_error(&format!("Illegal operand type for Jump: U8 is not allowed (requires U16 offset, current value: {u:?})"))),
-                        Operand::U16(offset) => self.ip += offset as usize,
+                        Operand::U16(offset) => self.current_frame().ip += offset as usize,
                     }
                 },
                 OpCode::Loop=>{
                     match instruction.operand {
                         Operand::None => return Err(self.runtime_error("Illegal operand for Loop: Operand::None is not supported (expected U16 offset)")),
                         Operand::U8(u) => return Err(self.runtime_error(&format!("Illegal operand type for Loop: U8 is not allowed (requires U16 offset, current value: {u:?})"))),
-                        Operand::U16(offset) => self.ip -= offset as usize,
+                        Operand::U16(offset) => self.current_frame().ip -= offset as usize,
                     }
                 }
             }
         }
     }
 
-    fn read_string(&self, operand: &Operand) -> Option<&Value> {
-        self.chunk.read_constant(operand)
-    }
-
     fn runtime_error(&mut self, arg: &str) -> InterpretError {
-        let line = self.chunk.get_line(self.ip - 1).unwrap_or(1);
+        let frame = self.current_frame();
+        let line = frame.function.chunk.get_line(frame.ip - 1).unwrap_or(1);
         self.reset_stack();
         InterpretError::RuntimeError(format!("[line {line}] in script: {arg}"))
     }
 
-    fn read_byte(&mut self) -> Result<Instruction, InterpretError> {
-        let instruction = self
-            .chunk
-            .read_opcode(self.ip)
-            .ok_or(InterpretError::RuntimeError("No next opcode".to_string()))?;
-        self.ip += instruction.len;
-        Ok(instruction)
-    }
-
-    fn read_constant(&self, operand: &Operand) -> Result<&Value, InterpretError> {
-        self.chunk
-            .read_constant(operand)
-            .ok_or(InterpretError::RuntimeError(
-                "Cannot find the constant".to_string(),
-            ))
+    fn current_frame(&mut self) -> &mut CallFrame {
+        self.frames.current_frame()
     }
 
     fn intern_chunk_constants(&mut self, chunk: &Chunk) {

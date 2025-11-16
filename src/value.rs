@@ -1,7 +1,4 @@
-use std::{
-    fmt::{Display, write},
-    slice::Iter,
-};
+use std::{fmt::Display, slice::Iter};
 
 use crate::{object::Function, string_pool::InternedString, vm::InterpretError};
 

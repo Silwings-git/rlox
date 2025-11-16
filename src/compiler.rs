@@ -1,7 +1,6 @@
 use std::{
     array,
     collections::HashMap,
-    f32::consts::E,
     iter::Peekable,
     mem,
     str::{CharIndices, FromStr},
