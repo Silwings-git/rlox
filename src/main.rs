@@ -14,10 +14,10 @@ mod chunk;
 mod compiler;
 mod config;
 mod debug;
+mod object;
 mod string_pool;
 mod value;
 mod vm;
-mod object;
 
 fn main() {
     let config = VMConfig::new();

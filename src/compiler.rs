@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     iter::Peekable,
     mem,
+    rc::Rc,
     str::{CharIndices, FromStr},
 };
 
@@ -37,7 +38,7 @@ impl<'a> Parser<'a> {
             panic_mode: false,
             rules: ParseRule::init_rules(),
             strings: StringPool::default(),
-            compiler: Compiler::new(FunctionType::Script),
+            compiler: Compiler::init_compiler(FunctionType::Script),
         }
     }
 
@@ -45,7 +46,7 @@ impl<'a> Parser<'a> {
         self.strings.intern(s)
     }
 
-    pub fn compile(mut self) -> Option<Function> {
+    pub fn compile(mut self) -> Option<Rc<Function>> {
         self.advance();
         while !self.match_token(TokenType::Eof) {
             self.declaration();
@@ -53,7 +54,7 @@ impl<'a> Parser<'a> {
 
         self.end_compiler();
 
-        (!self.had_error).then(|| self.compiler.function)
+        (!self.had_error).then(|| Rc::new(self.compiler.function))
     }
 
     /// 解析声明
@@ -479,19 +480,16 @@ impl<'a> Parser<'a> {
 
     fn end_compiler(&mut self) {
         self.emit_return();
-        #[cfg(feature = "debug_trace_execution")]
+        #[cfg(feature = "debug")]
         {
             if !self.had_error {
                 use crate::debug::disassemble_chunk;
-                let func_name = self
-                    .compiler
-                    .function
-                    .name
-                    .as_str()
-                    .is_empty()
-                    .then_some("<script>")
-                    .unwrap_or(self.compiler.function.name.as_str())
-                    .to_string();
+                let func_name = if self.compiler.function.name.as_str().is_empty() {
+                    "<script>"
+                } else {
+                    self.compiler.function.name.as_str()
+                }
+                .to_string();
                 disassemble_chunk(self.current_chunk(), &func_name);
             }
         }
@@ -1294,6 +1292,7 @@ impl<'a> Scanner<'a> {
 }
 
 pub struct Compiler<'a> {
+    // 记录哪些栈槽与哪些局部变量或临时变量相关联, 其中栈槽0供虚拟机自己内部使用
     locals: [Local<'a>; MAX_LOCAL_SIZE],
     // 记录作用域中有多少局部变量(有多少个数组槽在使用)
     local_count: usize,
@@ -1322,11 +1321,11 @@ impl<'a> Default for Local<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn new(function_type: FunctionType) -> Self {
+    fn init_compiler(function_type: FunctionType) -> Self {
         let mut compiler = Self {
             locals: array::from_fn(|_i| Local::default()),
-            local_count: Default::default(),
-            scope_depth: Default::default(),
+            local_count: 0,
+            scope_depth: 0,
             function: Default::default(),
             function_type,
         };

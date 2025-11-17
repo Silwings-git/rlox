@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
@@ -53,6 +54,10 @@ impl CallStack {
     fn reset(&mut self) {
         // todo 是否需要把call frame也重置?
         self.frame_count = 0;
+    }
+
+    fn push(&mut self, function: CallFrame) {
+        self.inner.push(function)
     }
 }
 
@@ -141,14 +146,14 @@ pub enum InterpretError {
 /// 代表正在进行的函数调用
 struct CallFrame {
     // 被调用函数
-    function: Function,
+    function: Rc<Function>,
     // 当前函数执行到的ip
     ip: usize,
     // 指向虚拟机的值栈中该函数使用的第一个槽
     slot: usize,
 }
 impl CallFrame {
-    pub fn new(function: Function) -> Self {
+    pub fn new(function: Rc<Function>) -> Self {
         Self {
             function,
             ip: 0,
@@ -217,13 +222,19 @@ impl VM {
     pub fn interpret(&mut self, source: &str) -> Result<(), InterpretError> {
         let parser = Parser::new(source);
 
-        if let Some(func) = parser.compile() {
-            self.intern_chunk_constants(&func.chunk);
-            self.frames.inner.push(CallFrame::new(func));
-            return self.run();
-        }
+        let function = match parser.compile() {
+            Some(func) => func,
+            None => return Err(InterpretError::CompileError),
+        };
 
-        return Err(InterpretError::CompileError);
+        self.push(Value::Function(function.clone()))?;
+
+        let frame = CallFrame::new(function.clone());
+        self.frames.push(frame);
+
+        self.intern_chunk_constants(&function.chunk);
+
+        self.run()
     }
 
     fn print_stack(&self) {

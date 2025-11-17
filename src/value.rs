@@ -1,4 +1,4 @@
-use std::{fmt::Display, slice::Iter};
+use std::{fmt::Display, rc::Rc, slice::Iter};
 
 use crate::{object::Function, string_pool::InternedString, vm::InterpretError};
 
@@ -8,7 +8,7 @@ pub enum Value {
     Nil,
     Number(f64),
     String(InternedString),
-    Function(Function),
+    Function(Rc<Function>),
 }
 
 impl PartialEq for Value {
@@ -55,13 +55,12 @@ impl Display for Value {
             Value::Number(n) => write!(f, "{n}"),
             Value::String(str) => write!(f, "{str}"),
             Value::Function(function) => {
-                let func_name = function
-                    .name
-                    .as_str()
-                    .is_empty()
-                    .then_some("<script>")
-                    .unwrap_or(function.name.as_str());
-                write!(f, "<fn {}>", func_name)
+                let func_name = if function.name.as_str().is_empty() {
+                    "<script>"
+                } else {
+                    function.name.as_str()
+                };
+                write!(f, "<fn {func_name}>")
             }
         }
     }

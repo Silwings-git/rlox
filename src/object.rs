@@ -19,7 +19,5 @@ impl Default for Function {
 
 pub enum FunctionType {
     Function,
-    Script
+    Script,
 }
-
-
