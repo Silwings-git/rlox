@@ -47,6 +47,12 @@ impl From<&InternedString> for Value {
     }
 }
 
+impl From<Rc<Function>> for Value {
+    fn from(value: Rc<Function>) -> Self {
+        Value::Function(value)
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

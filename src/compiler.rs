@@ -25,7 +25,7 @@ pub struct Parser<'a> {
     panic_mode: bool,
     rules: HashMap<TokenType, ParseRule<'a>>,
     strings: StringPool,
-    compiler: Compiler<'a>,
+    compiler: Box<Compiler<'a>>,
 }
 
 impl<'a> Parser<'a> {
@@ -38,7 +38,7 @@ impl<'a> Parser<'a> {
             panic_mode: false,
             rules: ParseRule::init_rules(),
             strings: StringPool::default(),
-            compiler: Compiler::init_compiler(FunctionType::Script),
+            compiler: Compiler::new(FunctionType::Script),
         }
     }
 
@@ -52,14 +52,16 @@ impl<'a> Parser<'a> {
             self.declaration();
         }
 
-        self.end_compiler();
+        let function = self.end_compiler();
 
-        (!self.had_error).then(|| Rc::new(self.compiler.function))
+        (!self.had_error).then(|| function)
     }
 
     /// 解析声明
     fn declaration(&mut self) {
-        if self.match_token(TokenType::Var) {
+        if self.match_token(TokenType::Fun) {
+            self.fun_declaration();
+        } else if self.match_token(TokenType::Var) {
             self.var_declaration();
         } else {
             self.statement();
@@ -67,6 +69,61 @@ impl<'a> Parser<'a> {
         if self.panic_mode {
             self.synchronize();
         }
+    }
+
+    fn fun_declaration(&mut self) {
+        let global = self.parse_variable("Expect function name.");
+        self.mark_initialized();
+        self.function(FunctionType::Function);
+        self.define_variable(global);
+    }
+
+    fn function(&mut self, function_type: FunctionType) {
+        self.init_compiler(function_type);
+        self.begin_scope();
+
+        self.consume(TokenType::LeftParen, "Expect '(' after function name.");
+        self.consume(TokenType::RightParen, "Expect ')' after parameters.");
+        self.consume(TokenType::LeftBrace, "Expect '{' after function body.");
+        self.block();
+
+        let function = self.end_compiler();
+        self.emit_constant(function);
+    }
+
+    /// 初始化新的编译器,用于处理嵌套函数
+    fn init_compiler(&mut self, function_type: FunctionType) {
+        let current = Compiler::new(function_type);
+        let enclosing = mem::replace(&mut self.compiler, current);
+        self.compiler.enclosing = Some(enclosing);
+    }
+
+    /// 结束当前编译器,恢复外层编译器,返回编译好的函数
+    fn end_compiler(&mut self) -> Rc<Function> {
+        self.emit_return();
+
+        #[cfg(feature = "debug")]
+        {
+            if !self.had_error {
+                use crate::debug::disassemble_chunk;
+                let func_name = if self.compiler.function.name.as_str().is_empty() {
+                    "<script>"
+                } else {
+                    self.compiler.function.name.as_str()
+                }
+                .to_string();
+                disassemble_chunk(&self.compiler.function.chunk, &func_name);
+            }
+        }
+
+        let function = Rc::new(mem::take(&mut self.compiler.function));
+
+        // 恢复外层编译器 (如果有的话)
+        if let Some(enclosing) = self.compiler.enclosing.take() {
+            self.compiler = enclosing;
+        }
+
+        function
     }
 
     /// 解析变量声明
@@ -100,6 +157,9 @@ impl<'a> Parser<'a> {
     }
 
     fn mark_initialized(&mut self) {
+        if self.compiler.scope_depth == 0 {
+            return;
+        }
         self.compiler.locals[self.compiler.local_count - 1].depth = self.compiler.scope_depth
     }
 
@@ -476,23 +536,6 @@ impl<'a> Parser<'a> {
 
         eprintln!(": {message}");
         self.had_error = true;
-    }
-
-    fn end_compiler(&mut self) {
-        self.emit_return();
-        #[cfg(feature = "debug")]
-        {
-            if !self.had_error {
-                use crate::debug::disassemble_chunk;
-                let func_name = if self.compiler.function.name.as_str().is_empty() {
-                    "<script>"
-                } else {
-                    self.compiler.function.name.as_str()
-                }
-                .to_string();
-                disassemble_chunk(self.current_chunk(), &func_name);
-            }
-        }
     }
 
     fn emit_return(&mut self) {
@@ -1292,6 +1335,7 @@ impl<'a> Scanner<'a> {
 }
 
 pub struct Compiler<'a> {
+    enclosing: Option<Box<Compiler<'a>>>,
     // 记录哪些栈槽与哪些局部变量或临时变量相关联, 其中栈槽0供虚拟机自己内部使用
     locals: [Local<'a>; MAX_LOCAL_SIZE],
     // 记录作用域中有多少局部变量(有多少个数组槽在使用)
@@ -1321,8 +1365,9 @@ impl<'a> Default for Local<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn init_compiler(function_type: FunctionType) -> Self {
-        let mut compiler = Self {
+    fn new(function_type: FunctionType) -> Box<Self> {
+        let mut compiler = Compiler {
+            enclosing: None,
             locals: array::from_fn(|_i| Local::default()),
             local_count: 0,
             scope_depth: 0,
@@ -1330,14 +1375,16 @@ impl<'a> Compiler<'a> {
             function_type,
         };
 
+        let index = compiler.local_count;
         compiler.local_count += 1;
-        let local = &mut compiler.locals[compiler.local_count];
-        local.depth = 0;
-        local.name = Token {
-            token_type: TokenType::Identifier,
-            lexeme: "",
-            line: 0,
+        compiler.locals[index] = Local {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "",
+                line: 0,
+            },
+            depth: 0,
         };
-        compiler
+        Box::new(compiler)
     }
 }
