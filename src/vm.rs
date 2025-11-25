@@ -41,7 +41,7 @@ struct CallStack {
 impl CallStack {
     fn new(max_depth: usize) -> Self {
         CallStack {
-            inner: vec![],
+            inner: Vec::with_capacity(max_depth),
             max_depth,
             frame_count: 0,
         }

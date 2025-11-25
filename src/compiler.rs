@@ -660,7 +660,7 @@ impl<'a> Parser<'a> {
             // 如果找得到,我们推进到下一个token,新得到的token是中缀表达式的右操作数
             self.advance();
             match self
-                // 获取前一个token(由于使用advance推进了,所有起始就是刚刚while判断中使用的current)的中缀解析函数并执行
+                // 获取前一个token(由于使用advance推进了,所以起始就是刚刚while判断中使用的current)的中缀解析函数并执行
                 .get_rule(&self.previous.token_type)
                 .and_then(|rule| rule.infix)
             {
