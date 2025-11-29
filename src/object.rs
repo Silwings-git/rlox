@@ -2,7 +2,7 @@ use crate::{chunk::Chunk, string_pool::InternedString};
 
 #[derive(Debug, Clone)]
 pub struct Function {
-    arity: usize,
+    pub arity: u8,
     pub chunk: Chunk,
     pub name: InternedString,
 }
@@ -20,4 +20,14 @@ impl Default for Function {
 pub enum FunctionType {
     Function,
     Script,
+}
+
+impl Function {
+    pub fn new(funtion_name: &str) -> Self {
+        Function {
+            arity: Default::default(),
+            chunk: Default::default(),
+            name: InternedString::new(funtion_name.into()),
+        }
+    }
 }

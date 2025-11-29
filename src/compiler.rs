@@ -38,7 +38,8 @@ impl<'a> Parser<'a> {
             panic_mode: false,
             rules: ParseRule::init_rules(),
             strings: StringPool::default(),
-            compiler: Compiler::new(FunctionType::Script),
+            // 顶层函数没有函数名,这样它就不能被用户代码调用
+            compiler: Compiler::new(FunctionType::Script, ""),
         }
     }
 
@@ -54,7 +55,7 @@ impl<'a> Parser<'a> {
 
         let function = self.end_compiler();
 
-        (!self.had_error).then(|| function)
+        (!self.had_error).then_some(function)
     }
 
     /// 解析声明
@@ -83,6 +84,22 @@ impl<'a> Parser<'a> {
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after function name.");
+        if !self.check(TokenType::RightParen) {
+            loop {
+                if let Some(added) = self.compiler.function.arity.checked_add(1) {
+                    self.compiler.function.arity = added;
+                } else {
+                    self.error_at_current(&format!("Can't have more than {} parameters.", u8::MAX));
+                }
+                let constant = self.parse_variable("Expect parmeter name.");
+                // 与有初始化器的局部变量不同，这里没有代码来初始化形参的值
+                self.define_variable(constant);
+
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
         self.consume(TokenType::RightParen, "Expect ')' after parameters.");
         self.consume(TokenType::LeftBrace, "Expect '{' after function body.");
         self.block();
@@ -93,7 +110,8 @@ impl<'a> Parser<'a> {
 
     /// 初始化新的编译器,用于处理嵌套函数
     fn init_compiler(&mut self, function_type: FunctionType) {
-        let current = Compiler::new(function_type);
+        let function_name = self.previous.lexeme;
+        let current = Compiler::new(function_type, function_name);
         let enclosing = mem::replace(&mut self.compiler, current);
         self.compiler.enclosing = Some(enclosing);
     }
@@ -769,6 +787,34 @@ impl<'a> Parser<'a> {
         }
         Operand::None
     }
+
+    /// 函数调用
+    fn call(&mut self, _can_assgin: bool) {
+        let arg_count = self.argument_list();
+        self.emit_op_code_and_operand(OpCode::Call, arg_count);
+    }
+
+    fn argument_list(&mut self) -> Operand {
+        let mut arg_count: u8 = 0;
+        if !self.check(TokenType::RightParen) {
+            loop {
+                self.expression();
+
+                if let Some(added) = arg_count.checked_add(1) {
+                    arg_count = added
+                } else {
+                    self.error_at_current(&format!("Can't have more than {} parameters.", u8::MAX));
+                    break;
+                }
+
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenType::RightParen, "Expect ')' after arguments.");
+        Operand::U8(arg_count)
+    }
 }
 
 /// 解析规则,其被映射到一个类型标识
@@ -812,7 +858,7 @@ impl<'a> ParseRule<'a> {
         let mut rules = HashMap::new();
         rules.insert(
             TokenType::LeftParen,
-            Self::new(Some(Parser::grouping), None, Precedence::None),
+            Self::new(Some(Parser::grouping), Some(Parser::call), Precedence::None),
         );
         rules.insert(
             TokenType::RightParen,
@@ -1365,13 +1411,13 @@ impl<'a> Default for Local<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn new(function_type: FunctionType) -> Box<Self> {
+    fn new(function_type: FunctionType, function_name: &str) -> Box<Self> {
         let mut compiler = Compiler {
             enclosing: None,
             locals: array::from_fn(|_i| Local::default()),
             local_count: 0,
             scope_depth: 0,
-            function: Default::default(),
+            function: Function::new(function_name),
             function_type,
         };
 

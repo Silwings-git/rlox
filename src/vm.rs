@@ -166,7 +166,7 @@ impl CallFrame {
             .function
             .chunk
             .read_opcode(self.ip)
-            .ok_or(InterpretError::RuntimeError("No next opcode".to_string()))?;
+            .ok_or_else(|| InterpretError::RuntimeError("No next opcode".to_string()))?;
         self.ip += instruction.len;
         Ok(instruction)
     }
@@ -179,9 +179,7 @@ impl CallFrame {
         self.function
             .chunk
             .read_constant(operand)
-            .ok_or(InterpretError::RuntimeError(
-                "Cannot find the constant".to_string(),
-            ))
+            .ok_or_else(|| InterpretError::RuntimeError("Cannot find the constant".to_string()))
     }
 }
 
@@ -335,14 +333,14 @@ impl VM {
                     print_value(
                         &self
                             .pop()
-                            .ok_or(InterpretError::RuntimeError("print: stack is empty".into()))?,
+                            .ok_or_else(|| InterpretError::RuntimeError("print: stack is empty".into()))?,
                     );
                     println!();
                     Ok(())?
                 }
                 OpCode::Pop => {
                     self.pop()
-                        .ok_or(InterpretError::RuntimeError("pop: stack is empty".into()))?;
+                        .ok_or_else(|| InterpretError::RuntimeError("pop: stack is empty".into()))?;
                 }
                 OpCode::Popn => {
                     if let Operand::U8(n) = &instruction.operand {
@@ -352,8 +350,8 @@ impl VM {
                     }
                 }
                 OpCode::DefineGlobal => {
-                    let name = self.current_frame().read_string(&instruction.operand).ok_or(
-                        InterpretError::RuntimeError(
+                    let name = self.current_frame().read_string(&instruction.operand).ok_or_else(
+                       || InterpretError::RuntimeError(
                             "Bytecode error: The operand of the DefineGlobal directive does not correspond to the string in the constant pool".into(),
                         ),
                     )?
@@ -364,14 +362,14 @@ impl VM {
                         // 允许全局变量声明为nil
                         self.peek(0).cloned().unwrap_or(Value::Nil),
                     );
-                    self.pop().ok_or(InterpretError::RuntimeError(
+                    self.pop().ok_or_else(||InterpretError::RuntimeError(
                         "define global: stack is empty".into(),
                     ))?;
                 }
                 OpCode::GetGlobal => {
                     let name = self.current_frame()
                         .read_string(&instruction.operand)
-                        .ok_or(InterpretError::RuntimeError(
+                        .ok_or_else(||InterpretError::RuntimeError(
                             "Failed to read global variable name from constants.".into(),
                         ))?
                         .as_string()?
@@ -389,8 +387,8 @@ impl VM {
                     }
                 }
                 OpCode::SetGlobal => {
-                    let name = self.current_frame().read_string(&instruction.operand).ok_or(
-                        InterpretError::RuntimeError(
+                    let name = self.current_frame().read_string(&instruction.operand).ok_or_else(
+                      ||  InterpretError::RuntimeError(
                             "Failed to read global variable name from constants.".into(),
                         ),
                     )?;
@@ -461,9 +459,59 @@ impl VM {
                         Operand::U8(u) => return Err(self.runtime_error(&format!("Illegal operand type for Loop: U8 is not allowed (requires U16 offset, current value: {u:?})"))),
                         Operand::U16(offset) => self.current_frame().ip -= offset as usize,
                     }
+                },
+                OpCode::Call=>{
+                    match instruction.operand {
+                        Operand::U8(arg_count) => {
+                            let callee = self.peek(arg_count as usize).cloned();
+                            if !self.call_value(callee,arg_count) {
+                                return Err(self.runtime_error("Invalid parameter list"));
+                            }    
+                        },
+                        Operand::U16(_)=>return Err(self.runtime_error("Illegal operand for Call: Operand::U16 is not supported (expected U8 offset)")),
+                        Operand::None=>return Err(self.runtime_error("Illegal operand for Call: Operand::None is not supported (expected U8 offset)"))
+                    }
                 }
             }
         }
+    }
+
+    fn call_value(&mut self,callee:Option<Value>,arg_count: u8)->bool{
+        if let Some(callee) = callee {
+            match callee {
+                Value::Function(function) => self.call(function.clone(),arg_count),
+                _=>false
+            }
+        }else {
+            false
+        }
+    }
+
+    fn call(&mut self,function: Rc<Function>,arg_count: u8)->bool{
+        let code_len =function.chunk.code_len();
+            // 我们让窗口提前一个槽开始，以使它们与实参对齐
+            // 例如sum(5,6,7):
+            /*
+                    rame->slot       stack_top(stack.len)
+                         ^                 ^
+                         | -1  | -arg_count|
+                         |-----|-----------|          
+            0        1   2     3   4   5   6     7     
+            +--------+---+-----+---+---+---+-----+-----
+            | script | 4 | sum | 5 | 6 | 7 | ... | ... 
+            +--------+---+-----+---+---+---+-----+-----
+                         ^                 ^
+                         |-----------------| 
+                           sum() CallFrame
+             */
+        let frame = CallFrame{
+            function,
+            ip:code_len,
+            slot:self.stack.len()-arg_count as usize-1,
+        };
+
+        self.frames.push(frame);
+        true
     }
 
     fn runtime_error(&mut self, arg: &str) -> InterpretError {

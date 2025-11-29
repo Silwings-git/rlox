@@ -72,7 +72,9 @@ opcodes! {
     Jump=0x23,
     // loop向前跳转
     Loop=0x24,
-    Print=0x99
+    // 调用
+    Call=0x25,
+    Print=0x255
 }
 
 // 操作数类型定义
