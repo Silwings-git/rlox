@@ -283,8 +283,24 @@ impl<'a> Parser<'a> {
             self.begin_scope();
             self.block();
             self.end_scope();
+        } else if self.match_token(TokenType::Return) {
+            self.return_statement();
         } else {
             self.expression_statement();
+        }
+    }
+
+    /// 解析return语句
+    fn return_statement(&mut self) {
+        if matches!(self.compiler.function_type, FunctionType::Script) {
+            self.error_at_current("Can't return from top-level code.");
+        }
+        if self.match_token(TokenType::Semicolon) {
+            self.emit_return();
+        } else {
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expect ';' after return value.");
+            self.emit_op_code(OpCode::Return);
         }
     }
 
@@ -557,6 +573,7 @@ impl<'a> Parser<'a> {
     }
 
     fn emit_return(&mut self) {
+        self.emit_op_code(OpCode::Nil);
         self.emit_op_code(OpCode::Return);
     }
 
@@ -858,7 +875,7 @@ impl<'a> ParseRule<'a> {
         let mut rules = HashMap::new();
         rules.insert(
             TokenType::LeftParen,
-            Self::new(Some(Parser::grouping), Some(Parser::call), Precedence::None),
+            Self::new(Some(Parser::grouping), Some(Parser::call), Precedence::Call),
         );
         rules.insert(
             TokenType::RightParen,

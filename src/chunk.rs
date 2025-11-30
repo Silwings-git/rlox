@@ -74,7 +74,7 @@ opcodes! {
     Loop=0x24,
     // 调用
     Call=0x25,
-    Print=0x255
+    Print=0xFF
 }
 
 // 操作数类型定义
@@ -391,6 +391,19 @@ impl Chunk {
                     None
                 }
             },
+            OpCode::Call => {
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => Some(Instruction::new(OpCode::Call, Operand::U8(*operand), 2)),
+                    None => {
+                        println!(
+                            "Failed to read Call: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }
         }
     }
 

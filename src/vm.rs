@@ -1,11 +1,13 @@
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
+use std::time::SystemTime;
 
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
 use crate::config::VMConfig;
-use crate::object::Function;
+use crate::object::{Function, NativeFn};
 use crate::string_pool::{InternedString, StringPool};
 use crate::value::{Value, print_value};
 
@@ -34,8 +36,6 @@ pub struct VM {
 struct CallStack {
     inner: Vec<CallFrame>,
     max_depth: usize,
-    // 当前CallFrame栈的高度(正在进行函数调用的数量)
-    frame_count: usize,
 }
 
 impl CallStack {
@@ -43,7 +43,6 @@ impl CallStack {
         CallStack {
             inner: Vec::with_capacity(max_depth),
             max_depth,
-            frame_count: 0,
         }
     }
 
@@ -52,12 +51,25 @@ impl CallStack {
     }
 
     fn reset(&mut self) {
-        // todo 是否需要把call frame也重置?
-        self.frame_count = 0;
+        self.inner.clear();
     }
 
-    fn push(&mut self, function: CallFrame) {
-        self.inner.push(function)
+    fn is_at_max_depth(&self) -> bool {
+        self.inner.len() == self.max_depth
+    }
+}
+
+impl Deref for CallStack {
+    type Target = Vec<CallFrame>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for CallStack {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 
@@ -153,11 +165,11 @@ struct CallFrame {
     slot: usize,
 }
 impl CallFrame {
-    pub fn new(function: Rc<Function>) -> Self {
+    pub fn new(function: Rc<Function>, slot: usize) -> Self {
         Self {
             function,
             ip: 0,
-            slot: 0,
+            slot,
         }
     }
 
@@ -185,12 +197,14 @@ impl CallFrame {
 
 impl VM {
     pub fn new(config: VMConfig) -> Self {
-        VM {
+        let mut vm = VM {
             frames: CallStack::new(config.max_frames_depth),
             stack: Stack::new(config.max_stack_depth),
             globals: HashMap::new(),
             strings: Default::default(),
-        }
+        };
+        vm.define_native_function("clock", clock_native);
+        vm
     }
 
     fn peek(&self, distance: usize) -> Option<&Value> {
@@ -227,7 +241,7 @@ impl VM {
 
         self.push(Value::Function(function.clone()))?;
 
-        let frame = CallFrame::new(function.clone());
+        let frame = CallFrame::new(function.clone(), 0);
         self.frames.push(frame);
 
         self.intern_chunk_constants(&function.chunk);
@@ -261,7 +275,20 @@ impl VM {
             let instruction = self.current_frame().read_byte()?;
             match instruction.op {
                 OpCode::Return => {
-                    return Ok(());
+                    // 取出函数执行结果
+                    let result =self.pop();
+                    // 取出当前函数
+                    let top_frame = self.frames.pop().unwrap();
+                    // 如果当前调用栈是空的,说明是顶层函数,弹出主脚本函数,结束执行
+                    if self.frames.is_empty() {
+                        self.pop();
+                        return Ok(());
+                    }
+
+                    // 丢弃所有被调用者用于存储参数和局部变量的栈槽
+                    self.popn(self.stack.len()-top_frame.slot)?;
+                    // 向栈中压入当前函数执行结果
+                    self.push(result.unwrap_or(Value::Nil))?;
                 }
                 OpCode::Constant => {
                     let constant = self.current_frame().read_constant(&instruction.operand)?.clone();
@@ -464,9 +491,7 @@ impl VM {
                     match instruction.operand {
                         Operand::U8(arg_count) => {
                             let callee = self.peek(arg_count as usize).cloned();
-                            if !self.call_value(callee,arg_count) {
-                                return Err(self.runtime_error("Invalid parameter list"));
-                            }    
+                            self.call_value(callee,arg_count)?;
                         },
                         Operand::U16(_)=>return Err(self.runtime_error("Illegal operand for Call: Operand::U16 is not supported (expected U8 offset)")),
                         Operand::None=>return Err(self.runtime_error("Illegal operand for Call: Operand::None is not supported (expected U8 offset)"))
@@ -476,49 +501,81 @@ impl VM {
         }
     }
 
-    fn call_value(&mut self,callee:Option<Value>,arg_count: u8)->bool{
+    fn call_value(&mut self, callee: Option<Value>, arg_count: u8) -> Result<(), InterpretError> {
         if let Some(callee) = callee {
             match callee {
-                Value::Function(function) => self.call(function.clone(),arg_count),
-                _=>false
+                Value::Function(function) => self.call(function.clone(), arg_count),
+                Value::NativeFunction(function) => {
+                    let args = self.popn(arg_count as usize).unwrap_or_else(|_e| vec![]);
+                    let result = function(args);
+                    self.pop();
+                    self.push(result)?;
+                    Ok(())
+                }
+                _ => Err(self.runtime_error("Invalid parameter list")),
             }
-        }else {
-            false
+        } else {
+            Err(self.runtime_error("Invalid parameter list"))
         }
     }
 
-    fn call(&mut self,function: Rc<Function>,arg_count: u8)->bool{
-        let code_len =function.chunk.code_len();
-            // 我们让窗口提前一个槽开始，以使它们与实参对齐
-            // 例如sum(5,6,7):
-            /*
-                    rame->slot       stack_top(stack.len)
-                         ^                 ^
-                         | -1  | -arg_count|
-                         |-----|-----------|          
-            0        1   2     3   4   5   6     7     
-            +--------+---+-----+---+---+---+-----+-----
-            | script | 4 | sum | 5 | 6 | 7 | ... | ... 
-            +--------+---+-----+---+---+---+-----+-----
-                         ^                 ^
-                         |-----------------| 
-                           sum() CallFrame
-             */
-        let frame = CallFrame{
-            function,
-            ip:code_len,
-            slot:self.stack.len()-arg_count as usize-1,
-        };
+    fn call(&mut self, function: Rc<Function>, arg_count: u8) -> Result<(), InterpretError> {
+        if arg_count != function.arity {
+            return Err(self.runtime_error(&format!(
+                "Expected {} arguments but got {}.",
+                function.arity, arg_count
+            )));
+        }
+
+        if self.frames.is_at_max_depth() {
+            return Err(self.runtime_error("Stack overflow."));
+        }
+
+        // 我们让窗口提前一个槽开始，以使它们与实参对齐
+        // 例如sum(5,6,7):
+        /*
+                rame->slot       stack_top(stack.len)
+                     ^                 ^
+                     | -1  | -arg_count|
+                     |-----|-----------|
+        0        1   2     3   4   5   6     7
+        +--------+---+-----+---+---+---+-----+-----
+        | script | 4 | sum | 5 | 6 | 7 | ... | ...
+        +--------+---+-----+---+---+---+-----+-----
+                     ^                 ^
+                     |-----------------|
+                       sum() CallFrame
+        */
+        let frame = CallFrame::new(function, self.stack.len() - arg_count as usize - 1);
 
         self.frames.push(frame);
-        true
+        Ok(())
     }
 
     fn runtime_error(&mut self, arg: &str) -> InterpretError {
-        let frame = self.current_frame();
-        let line = frame.function.chunk.get_line(frame.ip - 1).unwrap_or(1);
+        let mut error_message = String::from(arg);
+        (0..self.frames.len()).rev().for_each(|i| {
+            let frame = &self.frames[i];
+            let function = &frame.function;
+            let line = frame.function.chunk.get_line(frame.ip - 1).unwrap_or(1);
+
+            let func_name = if function.name.as_str().is_empty() {
+                "<script>"
+            } else {
+                function.name.as_str()
+            };
+
+            error_message.push_str(&format!("\n[line {line}] in {func_name}"));
+        });
+
         self.reset_stack();
-        InterpretError::RuntimeError(format!("[line {line}] in script: {arg}"))
+        InterpretError::RuntimeError(error_message)
+    }
+
+    /// 定义本地函数
+    fn define_native_function(&mut self, name: &str, function: NativeFn) {
+        let name = self.intern_interned(&InternedString::new(name.into()));
+        self.globals.insert(name, function.into());
     }
 
     fn current_frame(&mut self) -> &mut CallFrame {
@@ -532,4 +589,13 @@ impl VM {
             }
         }
     }
+}
+
+fn clock_native(_args: Vec<Value>) -> Value {
+    let v = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        * 1000.0;
+    v.into()
 }

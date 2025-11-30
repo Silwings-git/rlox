@@ -1,6 +1,10 @@
 use std::{fmt::Display, rc::Rc, slice::Iter};
 
-use crate::{object::Function, string_pool::InternedString, vm::InterpretError};
+use crate::{
+    object::{Function, NativeFn},
+    string_pool::InternedString,
+    vm::InterpretError,
+};
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -9,6 +13,7 @@ pub enum Value {
     Number(f64),
     String(InternedString),
     Function(Rc<Function>),
+    NativeFunction(NativeFn),
 }
 
 impl PartialEq for Value {
@@ -53,6 +58,12 @@ impl From<Rc<Function>> for Value {
     }
 }
 
+impl From<NativeFn> for Value {
+    fn from(value: NativeFn) -> Self {
+        Value::NativeFunction(value)
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -60,14 +71,8 @@ impl Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::Number(n) => write!(f, "{n}"),
             Value::String(str) => write!(f, "{str}"),
-            Value::Function(function) => {
-                let func_name = if function.name.as_str().is_empty() {
-                    "<script>"
-                } else {
-                    function.name.as_str()
-                };
-                write!(f, "<fn {func_name}>")
-            }
+            Value::Function(function) => function.fmt(f),
+            Value::NativeFunction(_) => write!(f, "<native fn>"),
         }
     }
 }

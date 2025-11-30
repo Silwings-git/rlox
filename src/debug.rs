@@ -6,19 +6,20 @@ use crate::{
 #[allow(dead_code)]
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     println!("== {name} ==");
+    println!("{:4} {:4} {:16} Index Constvalue", "IP", "Line", "OPCode",);
     let mut offset = 0;
     while offset < chunk.code_len() {
         offset = disassemble_instruction(chunk, offset);
     }
+    println!()
 }
 
 pub fn disassemble_instruction(chunk: &Chunk, mut offset: usize) -> usize {
     print!("{offset:04} ");
-
     if offset > 0 && chunk.get_line(offset) == chunk.get_line(offset - 1) {
         print!("{:>4} ", "|")
     } else {
-        print!("{:<4} ", chunk.get_line(offset).unwrap_or(0))
+        print!("{:>4} ", chunk.get_line(offset).unwrap_or(0))
     }
 
     let instruction = match chunk.read_opcode(offset) {
@@ -57,6 +58,7 @@ pub fn disassemble_instruction(chunk: &Chunk, mut offset: usize) -> usize {
         OpCode::JumpIfFalse => jump_instruction("OP_JUMP_IF_FALSE", &instruction, offset, true),
         OpCode::Jump => jump_instruction("OP_JUMP", &instruction, offset, true),
         OpCode::Loop => jump_instruction("OP_LOOP", &instruction, offset, false),
+        OpCode::Call => byte_instruction("OP_CALL", &instruction),
     }
 
     offset
@@ -85,7 +87,8 @@ fn byte_instruction(name: &str, instruction: &Instruction) {
         Operand::U16(slot) => slot as usize,
         Operand::None => 0,
     };
-    println!("{name:<16} {slot:4}");
+    // println!("{name} {slot:4}");
+    println!("{name:<16} {slot} ");
 }
 
 fn simple_instruction(name: &str) {
