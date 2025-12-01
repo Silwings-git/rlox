@@ -496,7 +496,8 @@ impl VM {
                         Operand::U16(_)=>return Err(self.runtime_error("Illegal operand for Call: Operand::U16 is not supported (expected U8 offset)")),
                         Operand::None=>return Err(self.runtime_error("Illegal operand for Call: Operand::None is not supported (expected U8 offset)"))
                     }
-                }
+                },
+                OpCode::Closure=>todo!()
             }
         }
     }

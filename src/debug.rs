@@ -59,9 +59,22 @@ pub fn disassemble_instruction(chunk: &Chunk, mut offset: usize) -> usize {
         OpCode::Jump => jump_instruction("OP_JUMP", &instruction, offset, true),
         OpCode::Loop => jump_instruction("OP_LOOP", &instruction, offset, false),
         OpCode::Call => byte_instruction("OP_CALL", &instruction),
+        OpCode::Closure => closure_instruction("OP_CLOSURE", chunk, &instruction),
     }
 
     offset
+}
+
+fn closure_instruction(name: &str, chunk: &Chunk, instruction: &Instruction) {
+    let operand = match instruction.operand {
+        Operand::None => 0,
+        Operand::U8(u) => u as usize,
+        Operand::U16(u) => u as usize,
+    };
+    print!("{name:16} {operand:4}");
+    let constant = chunk.read_constant(&instruction.operand).unwrap();
+    print_value(constant);
+    println!()
 }
 
 fn jump_instruction(name: &str, instruction: &Instruction, offset: usize, add: bool) {

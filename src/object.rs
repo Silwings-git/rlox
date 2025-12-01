@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, rc::Rc};
 
 use crate::{chunk::Chunk, string_pool::InternedString, value::Value};
 
@@ -46,3 +46,8 @@ impl Function {
 }
 
 pub type NativeFn = fn(Vec<Value>) -> Value;
+
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub function: Rc<Function>,
+}

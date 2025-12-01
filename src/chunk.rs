@@ -43,37 +43,39 @@ opcodes! {
     // true
     True=0x09,
     // false
-    False=0x10,
+    False=0x0A,
     // !
-    Not=0x11,
+    Not=0x0B,
     // =
-    Equal=0x12,
+    Equal=0x0C,
     // >
-    Gerater=0x13,
+    Gerater=0x0D,
     // <
-    Less=0x14,
+    Less=0x0E,
     // 弹出栈顶值并将其遗弃
-    Pop=0x15,
+    Pop=0x0F,
     // 弹出n个栈顶值并将其遗弃
-    Popn=0x16,
+    Popn=0x10,
     // 定义全局变量
-    DefineGlobal=0x17,
+    DefineGlobal=0x11,
     // 获取全局变量
-    GetGlobal=0x18,
+    GetGlobal=0x12,
     // 赋值全局变量
-    SetGlobal=0x19,
+    SetGlobal=0x13,
     // 获取局部变量
-    GetLocal=0x20,
+    GetLocal=0x14,
     // 赋值局部变量
-    SetLocal=0x21,
+    SetLocal=0x15,
     // 如果为false则跳转(16位操作数)
-    JumpIfFalse=0x22,
+    JumpIfFalse=0x16,
     // 跳转(16位操作数)
-    Jump=0x23,
+    Jump=0x17,
     // loop向前跳转
-    Loop=0x24,
+    Loop=0x18,
     // 调用
-    Call=0x25,
+    Call=0x19,
+    // 闭包
+    Closure=0x1A,
     Print=0xFF
 }
 
@@ -222,188 +224,86 @@ impl Chunk {
     }
 
     pub fn read_opcode(&self, offset: usize) -> Option<Instruction> {
-        let byte = self.code.get(offset);
+        // 辅助宏：处理无操作数指令
+        macro_rules! no_operand {
+            ($op:ident) => {
+                Some(Instruction::new(OpCode::$op, Operand::None, 1))
+            };
+        }
 
+        // 辅助宏：处理 U8 操作数指令
+        macro_rules! u8_operand {
+            ($op:ident, $op_name:expr) => {{
+                let operand_offset = offset + 1;
+                match self.code.get(operand_offset) {
+                    Some(operand) => Some(Instruction::new(OpCode::$op, Operand::U8(*operand), 2)),
+                    None => {
+                        println!(
+                            "Failed to read {}: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
+                            $op_name,
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }};
+        }
+
+        // 辅助宏：处理 U16 操作数指令
+        macro_rules! u16_operand {
+            ($op:ident, $op_name:expr) => {{
+                match self.read_u16_operand(offset) {
+                    Some(operand) => Some(Instruction::new(OpCode::$op, Operand::U16(operand), 3)),
+                    None => {
+                        println!(
+                            "Failed to read {}: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
+                            $op_name,
+                            offset + 1,
+                            offset + 2,
+                            self.code.len()
+                        );
+                        None
+                    }
+                }
+            }};
+        }
+
+        let byte = self.code.get(offset);
         let op_code = byte.and_then(|b| OpCode::try_from(*b).ok())?;
 
         match op_code {
-            OpCode::Return => Some(Instruction::new(OpCode::Return, Operand::None, 1)),
-            OpCode::Constant => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => {
-                        Some(Instruction::new(OpCode::Constant, Operand::U8(*operand), 2))
-                    }
-                    _ => {
-                        println!(
-                            "Failed to read OpConstant: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::Negate => Some(Instruction::new(OpCode::Negate, Operand::None, 1)),
-            OpCode::Add => Some(Instruction::new(OpCode::Add, Operand::None, 1)),
-            OpCode::Subtract => Some(Instruction::new(OpCode::Subtract, Operand::None, 1)),
-            OpCode::Multiply => Some(Instruction::new(OpCode::Multiply, Operand::None, 1)),
-            OpCode::Divide => Some(Instruction::new(OpCode::Divide, Operand::None, 1)),
-            OpCode::True => Some(Instruction::new(OpCode::True, Operand::None, 1)),
-            OpCode::False => Some(Instruction::new(OpCode::False, Operand::None, 1)),
-            OpCode::Nil => Some(Instruction::new(OpCode::Nil, Operand::None, 1)),
-            OpCode::Not => Some(Instruction::new(OpCode::Not, Operand::None, 1)),
-            OpCode::Equal => Some(Instruction::new(OpCode::Equal, Operand::None, 1)),
-            OpCode::Gerater => Some(Instruction::new(OpCode::Gerater, Operand::None, 1)),
-            OpCode::Less => Some(Instruction::new(OpCode::Less, Operand::None, 1)),
-            OpCode::Print => Some(Instruction::new(OpCode::Print, Operand::None, 1)),
-            OpCode::Pop => Some(Instruction::new(OpCode::Pop, Operand::None, 1)),
-            OpCode::Popn => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => Some(Instruction::new(OpCode::Popn, Operand::U8(*operand), 2)),
-                    _ => {
-                        println!(
-                            "Failed to read Popn: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::DefineGlobal => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => Some(Instruction::new(
-                        OpCode::DefineGlobal,
-                        Operand::U8(*operand),
-                        2,
-                    )),
-                    None => {
-                        println!(
-                            "Failed to read OpDefineGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::GetGlobal => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => Some(Instruction::new(
-                        OpCode::GetGlobal,
-                        Operand::U8(*operand),
-                        2,
-                    )),
-                    None => {
-                        println!(
-                            "Failed to read OpGetGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::SetGlobal => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => Some(Instruction::new(
-                        OpCode::SetGlobal,
-                        Operand::U8(*operand),
-                        2,
-                    )),
-                    None => {
-                        println!(
-                            "Failed to read OpSetGlobal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::GetLocal => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => {
-                        Some(Instruction::new(OpCode::GetLocal, Operand::U8(*operand), 2))
-                    }
-                    None => {
-                        println!(
-                            "Failed to read OpGetLocal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::SetLocal => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => {
-                        Some(Instruction::new(OpCode::SetLocal, Operand::U8(*operand), 2))
-                    }
-                    None => {
-                        println!(
-                            "Failed to read OpSetLocal: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
-            OpCode::JumpIfFalse => match self.read_u16_operand(offset) {
-                Some(operand) => Some(Instruction::new(
-                    OpCode::JumpIfFalse,
-                    Operand::U16(operand),
-                    3,
-                )),
-                None => {
-                    println!(
-                        "Failed to read OpJumpIfFalse: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
-                        offset + 1,
-                        offset + 2,
-                        self.code.len()
-                    );
-                    None
-                }
-            },
-            OpCode::Jump => match self.read_u16_operand(offset) {
-                Some(operand) => Some(Instruction::new(OpCode::Jump, Operand::U16(operand), 3)),
-                None => {
-                    println!(
-                        "Failed to read OpJump: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
-                        offset + 1,
-                        offset + 2,
-                        self.code.len()
-                    );
-                    None
-                }
-            },
-            OpCode::Loop => match self.read_u16_operand(offset) {
-                Some(operand) => Some(Instruction::new(OpCode::Loop, Operand::U16(operand), 3)),
-                None => {
-                    println!(
-                        "Failed to read OpLoop: Missing operands at offset {offset} (needs access at offsets {} and {}, total length: {})",
-                        offset + 1,
-                        offset + 2,
-                        self.code.len()
-                    );
-                    None
-                }
-            },
-            OpCode::Call => {
-                let operand_offset = offset + 1;
-                match self.code.get(operand_offset) {
-                    Some(operand) => Some(Instruction::new(OpCode::Call, Operand::U8(*operand), 2)),
-                    None => {
-                        println!(
-                            "Failed to read Call: Missing operand at offset {offset} (needs access at offset {operand_offset}, total length: {})",
-                            self.code.len()
-                        );
-                        None
-                    }
-                }
-            }
+            // 无操作数指令
+            OpCode::Return => no_operand!(Return),
+            OpCode::Negate => no_operand!(Negate),
+            OpCode::Add => no_operand!(Add),
+            OpCode::Subtract => no_operand!(Subtract),
+            OpCode::Multiply => no_operand!(Multiply),
+            OpCode::Divide => no_operand!(Divide),
+            OpCode::True => no_operand!(True),
+            OpCode::False => no_operand!(False),
+            OpCode::Nil => no_operand!(Nil),
+            OpCode::Not => no_operand!(Not),
+            OpCode::Equal => no_operand!(Equal),
+            OpCode::Gerater => no_operand!(Gerater),
+            OpCode::Less => no_operand!(Less),
+            OpCode::Print => no_operand!(Print),
+            OpCode::Pop => no_operand!(Pop),
+
+            // U8 操作数指令
+            OpCode::Constant => u8_operand!(Constant, "OpConstant"),
+            OpCode::Popn => u8_operand!(Popn, "Popn"),
+            OpCode::DefineGlobal => u8_operand!(DefineGlobal, "OpDefineGlobal"),
+            OpCode::GetGlobal => u8_operand!(GetGlobal, "OpGetGlobal"),
+            OpCode::SetGlobal => u8_operand!(SetGlobal, "OpSetGlobal"),
+            OpCode::GetLocal => u8_operand!(GetLocal, "OpGetLocal"),
+            OpCode::SetLocal => u8_operand!(SetLocal, "OpSetLocal"),
+            OpCode::Call => u8_operand!(Call, "Call"),
+            OpCode::Closure => u8_operand!(Closure, "Closure"),
+
+            // U16 操作数指令
+            OpCode::JumpIfFalse => u16_operand!(JumpIfFalse, "OpJumpIfFalse"),
+            OpCode::Jump => u16_operand!(Jump, "OpJump"),
+            OpCode::Loop => u16_operand!(Loop, "OpLoop"),
         }
     }
 

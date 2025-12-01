@@ -1,7 +1,7 @@
 use std::{fmt::Display, rc::Rc, slice::Iter};
 
 use crate::{
-    object::{Function, NativeFn},
+    object::{Closure, Function, NativeFn},
     string_pool::InternedString,
     vm::InterpretError,
 };
@@ -14,6 +14,7 @@ pub enum Value {
     String(InternedString),
     Function(Rc<Function>),
     NativeFunction(NativeFn),
+    Closure(Closure),
 }
 
 impl PartialEq for Value {
@@ -64,6 +65,12 @@ impl From<NativeFn> for Value {
     }
 }
 
+impl From<Closure> for Value {
+    fn from(value: Closure) -> Self {
+        Value::Closure(value)
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -73,6 +80,7 @@ impl Display for Value {
             Value::String(str) => write!(f, "{str}"),
             Value::Function(function) => function.fmt(f),
             Value::NativeFunction(_) => write!(f, "<native fn>"),
+            Value::Closure(c) => c.function.fmt(f),
         }
     }
 }

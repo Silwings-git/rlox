@@ -105,7 +105,8 @@ impl<'a> Parser<'a> {
         self.block();
 
         let function = self.end_compiler();
-        self.emit_constant(function);
+        let operand = self.make_constant(function);
+        self.emit_op_code_and_operand(OpCode::Closure, operand);
     }
 
     /// 初始化新的编译器,用于处理嵌套函数
