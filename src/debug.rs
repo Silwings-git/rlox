@@ -60,6 +60,8 @@ pub fn disassemble_instruction(chunk: &Chunk, mut offset: usize) -> usize {
         OpCode::Loop => jump_instruction("OP_LOOP", &instruction, offset, false),
         OpCode::Call => byte_instruction("OP_CALL", &instruction),
         OpCode::Closure => closure_instruction("OP_CLOSURE", chunk, &instruction),
+        OpCode::GetUpvalue => todo!(),
+        OpCode::SetUpvalue => todo!(),
     }
 
     offset

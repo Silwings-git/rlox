@@ -790,7 +790,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn resolve_local(&mut self, name: &Token) -> Operand {
+    fn resolve_upvalue(&mut self, name: &Token) -> Operand {
+        if self.compiler.enclosing.is_none() {
+            return Operand::None;
+        }
+
+        let local = self.resolve_local(name);
+        if !matches!(local, Operand::None) {
+            self.add_upvalue(local, true)
+        } else {
+            Operand::None
+        }
+    }
+
+    fn add_upvalue(&mut self, local: Operand, b: bool) -> Operand {
+        todo!()
+    }
+
+     fn resolve_local(&mut self, name: &Token) -> Operand {
         for index in (0..self.compiler.local_count).rev() {
             let local = &self.compiler.locals[index];
             if Self::identifiers_equal(name, &local.name) {
@@ -1450,5 +1467,15 @@ impl<'a> Compiler<'a> {
             depth: 0,
         };
         Box::new(compiler)
+    }
+
+    fn resolve_local(&mut self, name: &Token) -> Option<(Operand, isize)> {
+        for index in (0..self.local_count).rev() {
+            let local = &self.locals[index];
+            if name.lexeme == local.name.lexeme {
+                return Some((Operand::U8(index as u8), local.depth));
+            }
+        }
+        None
     }
 }

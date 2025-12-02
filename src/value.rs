@@ -103,6 +103,15 @@ impl Value {
             ))),
         }
     }
+
+    pub fn as_funtion(&self) -> Result<Rc<Function>, InterpretError> {
+        match self {
+            Value::Function(function) => Ok(function.clone()),
+            v => Err(InterpretError::RuntimeError(format!(
+                "cannot convert to function: {v:?}"
+            ))),
+        }
+    }
 }
 
 /// 常量池

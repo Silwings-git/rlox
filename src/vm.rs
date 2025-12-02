@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 use std::time::SystemTime;
 
 use crate::chunk::{Chunk, Instruction};
 use crate::chunk::{OpCode, Operand};
 use crate::compiler::Parser;
 use crate::config::VMConfig;
-use crate::object::{Function, NativeFn};
+use crate::object::{Closure, NativeFn};
 use crate::string_pool::{InternedString, StringPool};
 use crate::value::{Value, print_value};
 
@@ -158,16 +157,16 @@ pub enum InterpretError {
 /// 代表正在进行的函数调用
 struct CallFrame {
     // 被调用函数
-    function: Rc<Function>,
+    closure: Closure,
     // 当前函数执行到的ip
     ip: usize,
     // 指向虚拟机的值栈中该函数使用的第一个槽
     slot: usize,
 }
 impl CallFrame {
-    pub fn new(function: Rc<Function>, slot: usize) -> Self {
+    pub fn new(closure: Closure, slot: usize) -> Self {
         Self {
-            function,
+            closure,
             ip: 0,
             slot,
         }
@@ -175,6 +174,7 @@ impl CallFrame {
 
     fn read_byte(&mut self) -> Result<Instruction, InterpretError> {
         let instruction = self
+            .closure
             .function
             .chunk
             .read_opcode(self.ip)
@@ -184,11 +184,12 @@ impl CallFrame {
     }
 
     fn read_string(&self, operand: &Operand) -> Option<&Value> {
-        self.function.chunk.read_constant(operand)
+        self.closure.function.chunk.read_constant(operand)
     }
 
     fn read_constant(&self, operand: &Operand) -> Result<&Value, InterpretError> {
-        self.function
+        self.closure
+            .function
             .chunk
             .read_constant(operand)
             .ok_or_else(|| InterpretError::RuntimeError("Cannot find the constant".to_string()))
@@ -241,7 +242,7 @@ impl VM {
 
         self.push(Value::Function(function.clone()))?;
 
-        let frame = CallFrame::new(function.clone(), 0);
+        let frame = CallFrame::new(Closure::new(function.clone()), 0);
         self.frames.push(frame);
 
         self.intern_chunk_constants(&function.chunk);
@@ -270,7 +271,7 @@ impl VM {
                 self.print_stack();
                 let frame = self.current_frame();
                 use crate::debug::disassemble_instruction;
-                disassemble_instruction(&frame.function.chunk, frame.ip);
+                disassemble_instruction(&frame.closure.function.chunk, frame.ip);
             }
             let instruction = self.current_frame().read_byte()?;
             match instruction.op {
@@ -497,7 +498,15 @@ impl VM {
                         Operand::None=>return Err(self.runtime_error("Illegal operand for Call: Operand::None is not supported (expected U8 offset)"))
                     }
                 },
-                OpCode::Closure=>todo!()
+                OpCode::Closure=>{
+                    let closure = self.current_frame()
+                        .read_constant(&instruction.operand)
+                        .and_then(|v|v.as_funtion())
+                        .map(|func|Closure::new(func))?;
+                    self.push(closure)?;
+                },
+                OpCode::GetUpvalue=>todo!(),
+                OpCode::SetUpvalue=>todo!()
             }
         }
     }
@@ -505,7 +514,8 @@ impl VM {
     fn call_value(&mut self, callee: Option<Value>, arg_count: u8) -> Result<(), InterpretError> {
         if let Some(callee) = callee {
             match callee {
-                Value::Function(function) => self.call(function.clone(), arg_count),
+                // 不会有函数被直接调用,他们都被封装在Closure中
+                Value::Function(_) => Ok(()),
                 Value::NativeFunction(function) => {
                     let args = self.popn(arg_count as usize).unwrap_or_else(|_e| vec![]);
                     let result = function(args);
@@ -513,6 +523,7 @@ impl VM {
                     self.push(result)?;
                     Ok(())
                 }
+                Value::Closure(closure) => self.call(closure, arg_count),
                 _ => Err(self.runtime_error("Invalid parameter list")),
             }
         } else {
@@ -520,11 +531,11 @@ impl VM {
         }
     }
 
-    fn call(&mut self, function: Rc<Function>, arg_count: u8) -> Result<(), InterpretError> {
-        if arg_count != function.arity {
+    fn call(&mut self, closure: Closure, arg_count: u8) -> Result<(), InterpretError> {
+        if arg_count != closure.function.arity {
             return Err(self.runtime_error(&format!(
                 "Expected {} arguments but got {}.",
-                function.arity, arg_count
+                closure.function.arity, arg_count
             )));
         }
 
@@ -547,7 +558,7 @@ impl VM {
                      |-----------------|
                        sum() CallFrame
         */
-        let frame = CallFrame::new(function, self.stack.len() - arg_count as usize - 1);
+        let frame = CallFrame::new(closure, self.stack.len() - arg_count as usize - 1);
 
         self.frames.push(frame);
         Ok(())
@@ -557,8 +568,13 @@ impl VM {
         let mut error_message = String::from(arg);
         (0..self.frames.len()).rev().for_each(|i| {
             let frame = &self.frames[i];
-            let function = &frame.function;
-            let line = frame.function.chunk.get_line(frame.ip - 1).unwrap_or(1);
+            let function = &frame.closure.function;
+            let line = frame
+                .closure
+                .function
+                .chunk
+                .get_line(frame.ip - 1)
+                .unwrap_or(1);
 
             let func_name = if function.name.as_str().is_empty() {
                 "<script>"

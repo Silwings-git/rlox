@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "rust_lox"
+name = "rlox"
 version = "0.1.0"

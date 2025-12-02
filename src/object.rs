@@ -51,3 +51,9 @@ pub type NativeFn = fn(Vec<Value>) -> Value;
 pub struct Closure {
     pub function: Rc<Function>,
 }
+
+impl Closure {
+    pub fn new(function: Rc<Function>) -> Self {
+        Closure { function }
+    }
+}

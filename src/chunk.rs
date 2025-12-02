@@ -76,6 +76,10 @@ opcodes! {
     Call=0x19,
     // 闭包
     Closure=0x1A,
+    // 获取上值
+    GetUpvalue=0x1B,
+    // 设置上值
+    SetUpvalue=0x1C,
     Print=0xFF
 }
 
@@ -304,6 +308,8 @@ impl Chunk {
             OpCode::JumpIfFalse => u16_operand!(JumpIfFalse, "OpJumpIfFalse"),
             OpCode::Jump => u16_operand!(Jump, "OpJump"),
             OpCode::Loop => u16_operand!(Loop, "OpLoop"),
+            OpCode::GetUpvalue => todo!(),
+            OpCode::SetUpvalue => todo!(),
         }
     }
 
@@ -336,4 +342,3 @@ impl Chunk {
         &self.constants
     }
 }
-// 测试
