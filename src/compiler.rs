@@ -790,6 +790,34 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn named_variable2(&mut self, name: &Token, can_assign: bool) {
+        let get_op;
+        let set_op;
+
+        let mut arg = self.compiler.resolve_local(name);
+        if let None = arg {
+            arg = self.identifier_constant(name);
+            get_op = OpCode::GetGlobal;
+            set_op = OpCode::SetGlobal;
+        } else {
+            arg = self.resolve_upvalue(name);
+            if let Operand::None = arg {
+                get_op = OpCode::GetUpvalue;
+                set_op = OpCode::SetUpvalue;
+            } else {
+                get_op = OpCode::GetLocal;
+                set_op = OpCode::SetLocal;
+            }
+        }
+
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.emit_op_code_and_operand(set_op, arg);
+        } else {
+            self.emit_op_code_and_operand(get_op, arg);
+        }
+    }
+
     fn resolve_upvalue(&mut self, name: &Token) -> Operand {
         if self.compiler.enclosing.is_none() {
             return Operand::None;
@@ -807,7 +835,7 @@ impl<'a> Parser<'a> {
         todo!()
     }
 
-     fn resolve_local(&mut self, name: &Token) -> Operand {
+    fn resolve_local(&mut self, name: &Token) -> Operand {
         for index in (0..self.compiler.local_count).rev() {
             let local = &self.compiler.locals[index];
             if Self::identifiers_equal(name, &local.name) {
