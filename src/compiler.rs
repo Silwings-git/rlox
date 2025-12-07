@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     chunk::{Chunk, OpCode, Operand},
-    object::{Function, FunctionType},
+    object::{Function, FunctionType, Upvalue},
     string_pool::{InternedString, StringPool},
     value::Value,
 };
@@ -105,8 +105,16 @@ impl<'a> Parser<'a> {
         self.block();
 
         let function = self.end_compiler();
-        let operand = self.make_constant(function);
+        let operand = self.make_constant(function.clone());
         self.emit_op_code_and_operand(OpCode::Closure, operand);
+        function.upvalues.iter().for_each(|e| {
+            self.emit_operand(if e.is_local {
+                Operand::U8(1)
+            } else {
+                Operand::U8(0)
+            });
+            self.emit_operand(Operand::U8(e.index as u8));
+        });
     }
 
     /// 初始化新的编译器,用于处理嵌套函数
@@ -769,86 +777,39 @@ impl<'a> Parser<'a> {
     }
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
-        let get_op;
-        let set_op;
-
-        let mut arg = self.resolve_local(name);
-        if let Operand::None = arg {
-            arg = self.identifier_constant(name);
-            get_op = OpCode::GetGlobal;
-            set_op = OpCode::SetGlobal;
-        } else {
-            get_op = OpCode::GetLocal;
-            set_op = OpCode::SetLocal;
-        }
-
-        if can_assign && self.match_token(TokenType::Equal) {
-            self.expression();
-            self.emit_op_code_and_operand(set_op, arg);
-        } else {
-            self.emit_op_code_and_operand(get_op, arg);
-        }
-    }
-
-    fn named_variable2(&mut self, name: &Token, can_assign: bool) {
-        let get_op;
-        let set_op;
-
-        let mut arg = self.compiler.resolve_local(name);
-        if let None = arg {
-            arg = self.identifier_constant(name);
-            get_op = OpCode::GetGlobal;
-            set_op = OpCode::SetGlobal;
-        } else {
-            arg = self.resolve_upvalue(name);
-            if let Operand::None = arg {
-                get_op = OpCode::GetUpvalue;
-                set_op = OpCode::SetUpvalue;
-            } else {
-                get_op = OpCode::GetLocal;
-                set_op = OpCode::SetLocal;
-            }
-        }
-
-        if can_assign && self.match_token(TokenType::Equal) {
-            self.expression();
-            self.emit_op_code_and_operand(set_op, arg);
-        } else {
-            self.emit_op_code_and_operand(get_op, arg);
-        }
-    }
-
-    fn resolve_upvalue(&mut self, name: &Token) -> Operand {
-        if self.compiler.enclosing.is_none() {
-            return Operand::None;
-        }
-
-        let local = self.resolve_local(name);
-        if !matches!(local, Operand::None) {
-            self.add_upvalue(local, true)
-        } else {
-            Operand::None
-        }
-    }
-
-    fn add_upvalue(&mut self, local: Operand, b: bool) -> Operand {
-        todo!()
-    }
-
-    fn resolve_local(&mut self, name: &Token) -> Operand {
-        for index in (0..self.compiler.local_count).rev() {
-            let local = &self.compiler.locals[index];
-            if Self::identifiers_equal(name, &local.name) {
-                if local.depth == -1 {
+        let (get_op, set_op, operand) = self
+            .compiler
+            .resolve_local(name)
+            .map(|(op, depth)| {
+                if depth == -1 {
                     self.error_at(
                         name.to_owned(),
                         "Can't read local variable in its own initializer.",
                     );
                 }
-                return Operand::U8(index as u8);
-            }
+                (OpCode::GetLocal, OpCode::SetLocal, op)
+            })
+            .or_else(|| {
+                self.compiler
+                    .resolve_upvalue(name)
+                    .inspect_err(|e| self.error_at_current(e))
+                    .ok()
+                    .map(|op| (OpCode::GetUpvalue, OpCode::SetUpvalue, op))
+            })
+            .unwrap_or_else(|| {
+                (
+                    OpCode::GetGlobal,
+                    OpCode::SetGlobal,
+                    self.identifier_constant(name),
+                )
+            });
+
+        if can_assign && self.match_token(TokenType::Equal) {
+            self.expression();
+            self.emit_op_code_and_operand(set_op, operand);
+        } else {
+            self.emit_op_code_and_operand(get_op, operand);
         }
-        Operand::None
     }
 
     /// 函数调用
@@ -1497,7 +1458,8 @@ impl<'a> Compiler<'a> {
         Box::new(compiler)
     }
 
-    fn resolve_local(&mut self, name: &Token) -> Option<(Operand, isize)> {
+    /// 解析局部变量，返回操作数和深度，若不存在返None
+    fn resolve_local(&self, name: &Token) -> Option<(Operand, isize)> {
         for index in (0..self.local_count).rev() {
             let local = &self.locals[index];
             if name.lexeme == local.name.lexeme {
@@ -1505,5 +1467,38 @@ impl<'a> Compiler<'a> {
             }
         }
         None
+    }
+
+    fn resolve_upvalue(&mut self, name: &Token) -> Result<Operand, &'static str> {
+        if let Some(compiler) = &mut self.enclosing {
+            if let Some((Operand::U8(index), _depth)) = &compiler.resolve_local(name) {
+                return compiler.add_upvalue(*index as usize, true);
+            }
+            if let Some(compiler) = &mut compiler.enclosing {
+                if let Ok(Operand::U8(index)) = &compiler.resolve_upvalue(name) {
+                    return compiler.add_upvalue(*index as usize, false);
+                }
+            }
+        }
+
+        Ok(Operand::None)
+    }
+
+    fn add_upvalue(&mut self, index: usize, is_local: bool) -> Result<Operand, &'static str> {
+        if let Some(i) = self
+            .function
+            .upvalues
+            .iter()
+            .position(|v| v.index == index && v.is_local == is_local)
+        {
+            return Ok(Operand::U8(i as u8));
+        }
+
+        if self.function.upvalues.len() >= MAX_LOCAL_SIZE {
+            return Err("Too many closure variables in function.");
+        }
+
+        self.function.upvalues.push(Upvalue { index, is_local });
+        Ok(Operand::U8(self.function.upvalues.len() as u8))
     }
 }

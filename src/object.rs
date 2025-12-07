@@ -8,6 +8,26 @@ pub struct Function {
     pub arity: u8,
     pub chunk: Chunk,
     pub name: InternedString,
+    pub upvalues: Vec<Upvalue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Upvalue {
+    // 封闭局部变量的栈槽索引
+    pub index: usize,
+    //
+    pub is_local: bool,
+}
+
+#[derive(Debug)]
+pub struct UpvalueObj {
+    location: usize,
+}
+
+impl Display for UpvalueObj {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "upvalue")
+    }
 }
 
 impl Default for Function {
@@ -16,6 +36,7 @@ impl Default for Function {
             arity: Default::default(),
             chunk: Default::default(),
             name: InternedString::new("".into()),
+            upvalues: vec![],
         }
     }
 }
@@ -41,6 +62,7 @@ impl Function {
             arity: Default::default(),
             chunk: Default::default(),
             name: InternedString::new(funtion_name.into()),
+            upvalues: vec![],
         }
     }
 }

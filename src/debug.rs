@@ -1,6 +1,7 @@
 use crate::{
     chunk::{Chunk, Instruction, OpCode, Operand},
-    value::print_value,
+    object::{Function, Upvalue},
+    value::{Value, print_value},
 };
 
 #[allow(dead_code)]
@@ -59,15 +60,15 @@ pub fn disassemble_instruction(chunk: &Chunk, mut offset: usize) -> usize {
         OpCode::Jump => jump_instruction("OP_JUMP", &instruction, offset, true),
         OpCode::Loop => jump_instruction("OP_LOOP", &instruction, offset, false),
         OpCode::Call => byte_instruction("OP_CALL", &instruction),
-        OpCode::Closure => closure_instruction("OP_CLOSURE", chunk, &instruction),
-        OpCode::GetUpvalue => todo!(),
-        OpCode::SetUpvalue => todo!(),
+        OpCode::Closure => closure_instruction("OP_CLOSURE", chunk, &instruction, offset),
+        OpCode::GetUpvalue => byte_instruction("OP_GET_UPVALUE", &instruction),
+        OpCode::SetUpvalue => byte_instruction("OP_SET_UPVALUE", &instruction),
     }
 
     offset
 }
 
-fn closure_instruction(name: &str, chunk: &Chunk, instruction: &Instruction) {
+fn closure_instruction(name: &str, chunk: &Chunk, instruction: &Instruction, offset: usize) {
     let operand = match instruction.operand {
         Operand::None => 0,
         Operand::U8(u) => u as usize,
@@ -76,7 +77,17 @@ fn closure_instruction(name: &str, chunk: &Chunk, instruction: &Instruction) {
     print!("{name:16} {operand:4}");
     let constant = chunk.read_constant(&instruction.operand).unwrap();
     print_value(constant);
-    println!()
+    println!();
+    if let Value::Function(f) = constant {
+        for &Upvalue { index, is_local } in &f.upvalues {
+            println!(
+                "{:04}      |                     {} {}\n",
+                offset - 2,
+                if is_local { "local" } else { "upvalue" },
+                index
+            );
+        }
+    }
 }
 
 fn jump_instruction(name: &str, instruction: &Instruction, offset: usize, add: bool) {
